@@ -18,11 +18,22 @@ export const WORDNIK_CACHE_VALUE_VERSION = 1;
 
 /** Wordnik relationship types treated as synonyms vs. generally related. */
 export const SYNONYM_RELATIONSHIP_TYPES = ["synonym"] as const;
+/**
+ * Valid Wordnik relationship types (verified against the live API — its
+ * validation rejects the whole request if ANY type is unknown, e.g. the
+ * previously used "part-of"):
+ * antonym, cross-reference, equivalent, etymologically-related-term, form,
+ * has_topic, hypernym, hyponym, inflected-form, primary, related-word,
+ * rhyme, same-context, suggests, synonym, variant, verb-form, verb-stem.
+ * Types with no data for a word are simply omitted from the response.
+ */
 export const RELATED_RELATIONSHIP_TYPES = [
   "same-context",
   "hypernym",
   "hyponym",
-  "part-of",
+  "related-word",
+  "cross-reference",
+  "equivalent",
 ] as const;
 
 const KNOWN_RELATIONSHIP_TYPES: readonly string[] = [

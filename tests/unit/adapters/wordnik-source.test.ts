@@ -1,10 +1,51 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createWordnikSource,
+  RELATED_RELATIONSHIP_TYPES,
+  SYNONYM_RELATIONSHIP_TYPES,
   type WordnikSourceOptions,
 } from "../../../src/adapters/wordnik/source";
 
 const clock = { nowMs: () => 1_000 };
+
+// The relationship-type enum Wordnik's live API enforces (from its own 400
+// message). One unknown type fails the entire request, so every type we
+// request must be in this list.
+const WORDNIK_VALID_RELATIONSHIP_TYPES = new Set([
+  "antonym",
+  "cross-reference",
+  "equivalent",
+  "etymologically-related-term",
+  "form",
+  "has_topic",
+  "hypernym",
+  "hyponym",
+  "inflected-form",
+  "primary",
+  "related-word",
+  "rhyme",
+  "same-context",
+  "suggests",
+  "synonym",
+  "variant",
+  "verb-form",
+  "verb-stem",
+]);
+
+describe("wordnik relationship configuration", () => {
+  it("only requests relationship types Wordnik's API accepts", () => {
+    for (const type of [...SYNONYM_RELATIONSHIP_TYPES, ...RELATED_RELATIONSHIP_TYPES]) {
+      expect(
+        WORDNIK_VALID_RELATIONSHIP_TYPES.has(type),
+        `"${type}" is not a valid Wordnik relationshipType and would 400 every request`,
+      ).toBe(true);
+    }
+  });
+
+  it("does not include the known-invalid 'part-of' type", () => {
+    expect([...SYNONYM_RELATIONSHIP_TYPES, ...RELATED_RELATIONSHIP_TYPES]).not.toContain("part-of");
+  });
+});
 
 function baseOptions(overrides: Partial<WordnikSourceOptions> = {}): WordnikSourceOptions {
   return {
