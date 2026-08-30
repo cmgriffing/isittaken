@@ -1,4 +1,9 @@
 import type { CreativeProvider, CreativeProviderResult } from "../../domain/ports";
+import {
+  logUpstreamError,
+  readUpstreamErrorSnippet,
+  sanitizeUpstreamSnippet,
+} from "../../lib/upstream";
 
 export const OPENROUTER_PROMPT_VERSION = 1;
 
@@ -107,20 +112,34 @@ export function createOpenRouterProvider(options: OpenRouterOptions): CreativePr
       }
 
       if (response.status === 429) {
-        return { status: "failed", reason: "OpenRouter rate limit exceeded.", refundable: true };
-      }
-      if (!response.ok) {
+        const snippet = await readUpstreamErrorSnippet(response);
+        logUpstreamError("openrouter", response.status, snippet);
         return {
           status: "failed",
-          reason: `OpenRouter responded with status ${response.status}.`,
+          reason: `OpenRouter rate limit exceeded.${snippet ? `: ${snippet}` : ""}`,
+          refundable: true,
+        };
+      }
+      if (!response.ok) {
+        const snippet = await readUpstreamErrorSnippet(response);
+        logUpstreamError("openrouter", response.status, snippet);
+        return {
+          status: "failed",
+          reason: `OpenRouter responded with status ${response.status}.${
+            snippet ? `: ${snippet}` : ""
+          }`,
           refundable: true,
         };
       }
 
+      const bodyText = await response.text();
       let payload: ChatCompletionResponse;
       try {
-        payload = (await response.json()) as ChatCompletionResponse;
+        payload = JSON.parse(bodyText) as ChatCompletionResponse;
       } catch {
+        logUpstreamError("openrouter", response.status, sanitizeUpstreamSnippet(bodyText), {
+          problem: "non_json_body",
+        });
         return {
           status: "failed",
           reason: "OpenRouter returned a non-JSON response.",
