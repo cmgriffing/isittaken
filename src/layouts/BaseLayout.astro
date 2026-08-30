@@ -1,0 +1,43 @@
+---
+import "../styles/global.css";
+import AuthIsland from "../islands/AuthIsland.tsx";
+
+interface Props {
+  pageTitle: string;
+  description?: string;
+}
+
+const {
+  pageTitle,
+  description = "Check whether package names inspired by a word are available on npm.",
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <p class="brand"><a href="/">Is It Taken?</a></p>
+      <AuthIsland client:idle />
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <nav aria-label="Site">
+        <a href="/">Search</a>
+        <a href="/docs/about">About</a>
+        <a href="/docs/privacy">Privacy</a>
+        <a href="/docs/methodology">Methodology</a>
+      </nav>
+      <p>Availability results are observed, not guaranteed. npm is the authority.</p>
+    </footer>
+  </body>
+</html>

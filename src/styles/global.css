@@ -1,0 +1,155 @@
+:root {
+  --ink: #16211d;
+  --muted: #5b6b64;
+  --paper: #f7f6f2;
+  --card: #ffffff;
+  --accent: #0f6b4f;
+  --accent-ink: #ffffff;
+  --line: #dcd8cf;
+  --available: #0f6b4f;
+  --taken: #a4362c;
+  --invalid: #6b6b6b;
+  --unknown: #9a6b1f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  line-height: 1.6;
+}
+
+.skip-link {
+  position: absolute;
+  left: -999px;
+  top: 0;
+  background: var(--card);
+  padding: 0.5rem 1rem;
+}
+.skip-link:focus {
+  left: 0.5rem;
+  top: 0.5rem;
+  z-index: 10;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.brand a {
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+}
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding: 1rem 1.25rem 2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.site-footer nav {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+button,
+.button {
+  font: inherit;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0.45rem 0.9rem;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+}
+
+input[type="text"] {
+  font: inherit;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+}
+input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.prose h1,
+.prose h2 {
+  line-height: 1.25;
+}
+.prose code {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+
+.status-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.05rem 0.6rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.status-available {
+  color: var(--available);
+}
+.status-taken {
+  color: var(--taken);
+}
+.status-invalid {
+  color: var(--invalid);
+}
+.status-unknown {
+  color: var(--unknown);
+}
+
+.provenance {
+  display: inline-flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.provenance span {
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 4px;
+  padding: 0 0.35rem;
+  font-size: 0.75rem;
+}

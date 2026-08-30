@@ -1,0 +1,12 @@
+dist/
+node_modules/
+.astro/
+.netlify/
+coverage/
+test-results/
+playwright-report/
+pnpm-lock.yaml
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
