@@ -6,6 +6,11 @@ import type {
   RegistryValidation,
 } from "../../domain/ports";
 import type { RegistryLookupResult } from "../../domain/types";
+import {
+  logUpstreamError,
+  readUpstreamErrorSnippet,
+  sanitizeUpstreamSnippet,
+} from "../../lib/upstream";
 import { logger } from "../../lib/logger";
 
 export const NPM_CACHE_VALUE_VERSION = 1;
@@ -101,6 +106,8 @@ export function createNpmRegistry(options: NpmRegistryOptions): PackageRegistry 
     }
 
     if (response.status === 429) {
+      const snippet = await readUpstreamErrorSnippet(response);
+      logUpstreamError("npm", response.status, snippet, { name });
       return {
         status: "unknown",
         checkedAtMs: clock.nowMs(),
@@ -109,6 +116,8 @@ export function createNpmRegistry(options: NpmRegistryOptions): PackageRegistry 
     }
 
     if (response.status !== 200) {
+      const snippet = await readUpstreamErrorSnippet(response);
+      logUpstreamError("npm", response.status, snippet, { name });
       return {
         status: "unknown",
         checkedAtMs: clock.nowMs(),
@@ -117,9 +126,14 @@ export function createNpmRegistry(options: NpmRegistryOptions): PackageRegistry 
     }
 
     // 200: metadata proves presence only if the body is valid JSON metadata.
+    const bodyText = await response.text();
     try {
-      const payload: unknown = await response.json();
+      const payload: unknown = JSON.parse(bodyText) as unknown;
       if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+        logUpstreamError("npm", response.status, sanitizeUpstreamSnippet(bodyText), {
+          name,
+          problem: "unexpected_shape",
+        });
         return {
           status: "unknown",
           checkedAtMs: clock.nowMs(),
@@ -128,6 +142,10 @@ export function createNpmRegistry(options: NpmRegistryOptions): PackageRegistry 
       }
       return { status: "taken", checkedAtMs: clock.nowMs() };
     } catch {
+      logUpstreamError("npm", response.status, sanitizeUpstreamSnippet(bodyText), {
+        name,
+        problem: "non_json_body",
+      });
       return {
         status: "unknown",
         checkedAtMs: clock.nowMs(),

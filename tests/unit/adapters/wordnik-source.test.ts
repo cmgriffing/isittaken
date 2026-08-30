@@ -42,17 +42,41 @@ describe("createWordnikSource", () => {
     ]);
   });
 
-  it("reports rate limits and HTTP errors as unavailable", async () => {
+  it("reports rate limits and HTTP errors as unavailable, with the upstream error body", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response("slow down", { status: 429 }));
     const result = await createWordnikSource(baseOptions({ fetchImpl })).fetch("laser");
-    expect(result).toEqual({ status: "unavailable", reason: "Wordnik rate limit exceeded." });
+    expect(result.status).toBe("unavailable");
+    if (result.status === "unavailable") {
+      expect(result.reason).toMatch(/rate limit/);
+      expect(result.reason).toContain("slow down");
+    }
 
     const fetch500 = vi.fn().mockResolvedValue(new Response("boom", { status: 500 }));
     const result500 = await createWordnikSource(baseOptions({ fetchImpl: fetch500 })).fetch(
       "laser",
     );
     expect(result500.status).toBe("unavailable");
-    if (result500.status === "unavailable") expect(result500.reason).toMatch(/status 500/);
+    if (result500.status === "unavailable") {
+      expect(result500.reason).toMatch(/status 500/);
+      expect(result500.reason).toContain("boom");
+    }
+  });
+
+  it("includes the upstream 400 error details and redacts credentials", async () => {
+    // Wordnik 400s carry the explanation (e.g. invalid key or parameters).
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{"message":"invalid api_key=SECRET123 supplied"}', { status: 400 }),
+      );
+    const result = await createWordnikSource(baseOptions({ fetchImpl })).fetch("laser");
+    expect(result.status).toBe("unavailable");
+    if (result.status === "unavailable") {
+      expect(result.reason).toMatch(/status 400/);
+      expect(result.reason).toContain("invalid");
+      expect(result.reason).not.toContain("SECRET123");
+      expect(result.reason).toContain("[redacted]");
+    }
   });
 
   it("maps timeouts and transport failures to unavailable", async () => {

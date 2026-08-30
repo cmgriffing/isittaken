@@ -76,7 +76,11 @@ export function createSearchFunction(ctx: AppContext): (request: Request) => Pro
       const response = await runDiscovery(validated, deps);
       const degraded = response.sources
         .filter((source) => source.status !== "ok")
-        .map((source) => `${source.source}:${source.status}`);
+        .map((source) => ({
+          source: source.source,
+          status: source.status,
+          reason: source.reason,
+        }));
       if (degraded.length > 0) {
         logger.info("search_degraded_sources", { correlationId, sources: degraded });
       }
