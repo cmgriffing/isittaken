@@ -1,0 +1,32 @@
+# build output
+dist/
+.astro/
+
+# dependencies
+node_modules/
+
+# netlify
+.netlify/
+
+# env
+.env
+.env.*
+!.env.example
+
+# local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# test artifacts
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# os
+.DS_Store
+
+# openspec
+openspec/

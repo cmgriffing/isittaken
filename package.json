@@ -1,0 +1,52 @@
+{
+  "name": "isittaken",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Package name availability checker with synonym and creative candidate discovery.",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "migrate": "node ./scripts/run-migrations.mjs",
+    "verify": "pnpm lint && pnpm format:check && pnpm astro check && pnpm typecheck && pnpm test && pnpm test:browser && node ./scripts/run-migrations.mjs && pnpm vitest run tests/scheduled/local-invocation.test.ts && node ./scripts/verify-production-build.mjs"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@astrojs/preact": "^6.0.4",
+    "@libsql/client": "^0.17.4",
+    "@netlify/functions": "^6.0.0",
+    "astro": "^7.2.9",
+    "preact": "^10.29.8",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "@eslint/js": "^10.0.1",
+    "@netlify/vite-plugin": "^3.0.1",
+    "@playwright/test": "^1.62.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/preact": "^3.2.4",
+    "@types/node": "^26.4.0",
+    "eslint": "^10.9.1",
+    "eslint-plugin-astro": "^3.1.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "globals": "^17.11.0",
+    "jsdom": "^27.4.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-astro": "^0.14.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11"
+  }
+}

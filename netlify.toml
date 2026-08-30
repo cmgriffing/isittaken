@@ -1,0 +1,18 @@
+[build]
+  command = "pnpm build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "24.16.0"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# API routes are declared by each Function via its `config.path` export
+# (Netlify Functions v2), which works identically in local dev and production.
+# Unmatched API paths must not fall through to static asset resolution.
+[[redirects]]
+  from = "/api/*"
+  to = "/404"
+  status = 404
