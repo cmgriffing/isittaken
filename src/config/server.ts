@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 
 /**
@@ -247,8 +249,42 @@ export function loadServerConfig(
   };
 }
 
+let dotenvLoaded = false;
+
+/**
+ * Local-development convenience: load `.env` from the working directory into
+ * the environment before validating configuration (the Netlify Vite plugin
+ * only injects linked-site variables, not `.env`). Real environment
+ * variables always win; the file is not present in deployed environments,
+ * making this a no-op in production. Values are never logged.
+ */
+function ensureDotEnvLoaded(): void {
+  if (dotenvLoaded) return;
+  dotenvLoaded = true;
+  try {
+    const envPath = join(process.cwd(), ".env");
+    if (!existsSync(envPath)) return;
+    for (const line of readFileSync(envPath, "utf8").split("\n")) {
+      const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+      if (!match) continue;
+      let value = match[2] as string;
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      const key = match[1] as string;
+      if (process.env[key] === undefined && value !== "") process.env[key] = value;
+    }
+  } catch {
+    // Best effort only; configuration validation reports what's missing.
+  }
+}
+
 /** Memoized accessor for server runtime code (Functions, adapters). */
 export function getServerConfig(): ServerConfig {
+  ensureDotEnvLoaded();
   cached ??= loadServerConfig();
   return cached;
 }
