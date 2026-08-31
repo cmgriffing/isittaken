@@ -94,7 +94,7 @@ describe("end-to-end local journey", () => {
     // The OAuth callback uses global fetch (server-side code exchange).
     vi.stubGlobal("fetch", fetchImpl);
 
-    // 1. Anonymous discovery with Wordnik degraded: seed + npm results still come back.
+    // 1. Anonymous discovery with Wordnik degraded: seed + injected candidates still come back.
     const search = createSearchFunction(ctx);
     const anonymous = await search(
       new Request(`${origin}/api/search`, {
@@ -106,12 +106,10 @@ describe("end-to-end local journey", () => {
     expect(anonymous.status).toBe(200);
     const anonymousBody = (await anonymous.json()) as {
       sources: { source: string; status: string }[];
-      candidates: { name: string; registryResults: { status: string }[] }[];
+      candidates: { name: string }[];
     };
     expect(anonymousBody.sources[0]).toMatchObject({ source: "wordnik", status: "unavailable" });
-    expect(
-      anonymousBody.candidates.find((c) => c.name === "laser")?.registryResults[0]?.status,
-    ).toBe("taken");
+    expect(anonymousBody.candidates.find((c) => c.name === "laser")).toBeTruthy();
 
     // 2. Injected candidates join with their own provenance and don't consume AI quota.
     const injected = await search(

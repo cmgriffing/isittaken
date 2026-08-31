@@ -5,14 +5,14 @@ import SearchIsland from "../islands/SearchIsland.tsx";
 
 <BaseLayout
   pageTitle="Is It Taken? Package name availability, checked."
-  description="Search a seed word for synonyms, get creative AI alternatives, and check whether the names are available on npm."
+  description="Search a seed word for synonyms, get creative AI alternatives, and check whether the names are available across npm, PyPI, RubyGems, Hex, Maven Central, crates.io, NuGet, and Packagist."
 >
   <section class="hero">
     <h1>Is that package name taken?</h1>
     <p>
       Type a word. We collect synonyms and related words, invent a few creative alternatives if you
-      ask, and check each candidate against npm. An honest <strong>unknown</strong> is given when npm
-      can't answer.
+      ask, and check each candidate across your selected package registries. An honest{" "}
+      <strong>unknown</strong> is given when a registry can't answer.
     </p>
   </section>
 
@@ -26,8 +26,9 @@ import SearchIsland from "../islands/SearchIsland.tsx";
         Wordnik contributes synonyms and related words; a failed lookup is reported, never hidden.
       </li>
       <li>
-        Candidates are normalized and deduplicated, then checked against npm's registry with bounded
-        concurrency.
+        Candidates are normalized and deduplicated, then checked against the registries you select —
+        npm, PyPI, RubyGems, Hex, and Maven Central via this site's API; crates.io, NuGet, and
+        Packagist directly from your browser. Results fill in progressively.
       </li>
       <li>
         Optional: sign in with GitHub for AI-generated name ideas with per-user quotas. Anonymous

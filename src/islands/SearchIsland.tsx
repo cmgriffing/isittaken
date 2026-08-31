@@ -1,5 +1,12 @@
-import { useMemo, useState } from "preact/hooks";
-import type { ComposedCandidate, SearchResponse } from "../domain/types";
+import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import type { ComposedCandidate, RegistryId, SearchResponse } from "../domain/types";
+import { REGISTRY_LINEUP, registryById } from "../domain/registries";
+import type { RegistryDescriptor } from "../domain/registries";
+import {
+  createAvailabilityService,
+  type AvailabilityService,
+  type VerdictCell,
+} from "../lib/client/availability";
 import {
   mergeCandidates,
   searchCreative,
@@ -15,10 +22,43 @@ interface Props {
   initialSeed?: string;
 }
 
+const REGISTRY_SELECTION_STORAGE_KEY = "iit_registry_selection";
+
+function defaultSelection(): RegistryId[] {
+  return REGISTRY_LINEUP.map((descriptor) => descriptor.id);
+}
+
+function loadSelection(): RegistryId[] {
+  try {
+    const raw = localStorage.getItem(REGISTRY_SELECTION_STORAGE_KEY);
+    if (!raw) return defaultSelection();
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return defaultSelection();
+    // Only supported ids, lineup order preserved.
+    return REGISTRY_LINEUP.filter((descriptor) => parsed.includes(descriptor.id)).map(
+      (descriptor) => descriptor.id,
+    );
+  } catch {
+    return defaultSelection();
+  }
+}
+
+function saveSelection(ids: RegistryId[]): void {
+  try {
+    localStorage.setItem(REGISTRY_SELECTION_STORAGE_KEY, JSON.stringify(ids));
+  } catch {
+    // Storage unavailability never breaks the search itself.
+  }
+}
+
+function cellKey(candidateName: string, registryId: RegistryId): string {
+  return `${candidateName}|${registryId}`;
+}
+
 /**
  * The interactive search experience. Ordinary discovery (seed + Wordnik +
- * npm) runs independently from creative generation, so anonymous visitors
- * and provider failures never invalidate results already on screen.
+ * OpenRouter candidates) returns names with provenance; availability across
+ * the selected registries fans out progressively from the client.
  */
 export default function SearchIsland({ initialSeed = "" }: Props) {
   const [seed, setSeed] = useState(initialSeed);
@@ -30,6 +70,9 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
   const [creative, setCreative] = useState<CreativeClientResult | null>(null);
   const [creativeLoading, setCreativeLoading] = useState(false);
 
+  const [selectedIds, setSelectedIds] = useState<RegistryId[]>(loadSelection);
+  const [cells, setCells] = useState<Map<string, VerdictCell>>(new Map());
+
   const merged = useMemo<ComposedCandidate[]>(
     () =>
       mergeCandidates([
@@ -38,6 +81,42 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
       ]),
     [ordinary, creative],
   );
+
+  const selectionKey = selectedIds.join(",");
+  const selectedDescriptors = useMemo(
+    () => selectedIds.map((id) => registryById(id)).filter((d): d is RegistryDescriptor => !!d),
+    [selectionKey],
+  );
+
+  const applyCell = useCallback((cell: VerdictCell) => {
+    setCells((previous) => {
+      const next = new Map(previous);
+      next.set(cellKey(cell.candidateName, cell.registry), cell);
+      return next;
+    });
+  }, []);
+
+  const service = useMemo<AvailabilityService | null>(() => {
+    if (typeof window === "undefined") return null;
+    return createAvailabilityService({ registries: selectedDescriptors, onResult: applyCell });
+  }, [selectionKey, applyCell]);
+
+  // Fan out availability checks whenever candidates or the registry
+  // selection change. The service dedupes and caches; results stream in.
+  useEffect(() => {
+    if (!service || merged.length === 0 || selectedDescriptors.length === 0) return;
+    void service.checkCandidates(merged.map((candidate) => ({ name: candidate.name })));
+  }, [service, merged]);
+
+  function toggleRegistry(id: RegistryId, enabled: boolean) {
+    setSelectedIds((previous) => {
+      const next = enabled
+        ? REGISTRY_LINEUP.filter((d) => previous.includes(d.id) || d.id === id).map((d) => d.id)
+        : previous.filter((existing) => existing !== id);
+      saveSelection(next);
+      return next;
+    });
+  }
 
   async function runOrdinary(event?: Event) {
     event?.preventDefault();
@@ -100,8 +179,30 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
           </button>
         </div>
         <p class="hint" id="seed-hint">
-          We look up synonyms and related words, then check npm availability.
+          We look up synonyms and related words, then check availability across your selected
+          package registries.
         </p>
+
+        <fieldset class="registry-toggles">
+          <legend>Registries to check</legend>
+          {REGISTRY_LINEUP.map((descriptor) => (
+            <label key={descriptor.id}>
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(descriptor.id)}
+                onChange={(e) =>
+                  toggleRegistry(descriptor.id, (e.target as HTMLInputElement).checked)
+                }
+              />{" "}
+              {descriptor.label}
+              <span class="hint">
+                {descriptor.venue === "server"
+                  ? " · checked via API"
+                  : " · checked in your browser"}
+              </span>
+            </label>
+          ))}
+        </fieldset>
       </form>
 
       <div aria-live="polite">
@@ -123,6 +224,8 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
           seedLabel={seedUsed ?? ordinary.seed}
           candidates={merged}
           ordinarySources={ordinary.sources}
+          cells={cells}
+          selectedDescriptors={selectedDescriptors}
         />
       )}
 
@@ -198,12 +301,29 @@ function CreativeControls(props: {
   );
 }
 
+function formatCheckedAt(checkedAtMs: number): string {
+  return `${new Date(checkedAtMs).toISOString().replace("T", " ").slice(0, 16)} UTC`;
+}
+
 export function Results(props: {
   seedLabel: string;
   candidates: ComposedCandidate[];
   ordinarySources?: SearchResponse["sources"];
+  cells: Map<string, VerdictCell>;
+  selectedDescriptors: readonly RegistryDescriptor[];
 }) {
-  const { seedLabel, candidates, ordinarySources } = props;
+  const { seedLabel, candidates, ordinarySources, cells, selectedDescriptors } = props;
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpanded(name: string) {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
+
   return (
     <div class="results">
       <h3>Names for “{seedLabel}”</h3>
@@ -217,36 +337,77 @@ export function Results(props: {
       )}
       {candidates.length === 0 && <p class="hint">No candidates yet — run a search.</p>}
       <ul class="candidates">
-        {candidates.map((candidate) => (
-          <CandidateRow key={candidate.name} candidate={candidate} />
-        ))}
+        {candidates.map((candidate) => {
+          const cellFor = (registryId: RegistryId) =>
+            cells.get(cellKey(candidate.name, registryId));
+          const availableCount = selectedDescriptors.filter(
+            (descriptor) => cellFor(descriptor.id)?.status === "available",
+          ).length;
+          const isOpen = expanded.has(candidate.name);
+          return (
+            <CandidateRow
+              key={candidate.name}
+              candidate={candidate}
+              cellFor={cellFor}
+              selectedDescriptors={selectedDescriptors}
+              availableCount={availableCount}
+              expanded={isOpen}
+              onToggle={() => toggleExpanded(candidate.name)}
+            />
+          );
+        })}
       </ul>
       <p class="disclaimer">
-        “Available” means npm did not know the name at the check time. It is not a publishing
-        guarantee — npm can reject names or they can be taken at any moment.
+        “Available” means the registry did not know the name at the check time. It is not a
+        publishing guarantee — registries can reject names or they can be taken at any moment.
       </p>
     </div>
   );
 }
 
-function CandidateRow({ candidate }: { candidate: ComposedCandidate }) {
-  const npm = candidate.registryResults.find((r) => r.registry === "npm");
-  const status = npm?.status ?? "unknown";
-  // The slug npm actually checked (e.g. "back end" -> "back-end"); falls
-  // back to the candidate name when no registry result exists yet.
-  const npmSlug = npm?.name ?? candidate.name;
-  const slugDiffers = npm != null && npm.name !== candidate.name;
-  const checkedAt =
-    npm?.checkedAtMs != null
-      ? new Date(npm.checkedAtMs).toISOString().replace("T", " ").slice(0, 16) + " UTC"
-      : null;
+function CandidateRow(props: {
+  candidate: ComposedCandidate;
+  cellFor: (registryId: RegistryId) => VerdictCell | undefined;
+  selectedDescriptors: readonly RegistryDescriptor[];
+  availableCount: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const { candidate, cellFor, selectedDescriptors, availableCount, expanded, onToggle } = props;
+  const denominator = selectedDescriptors.length;
   return (
     <li class="candidate">
       <div class="candidate-head">
         <code class="name">{candidate.name}</code>
-        <span class={`status-pill status-${status}`}>
-          {REGISTRY_STATUS_LABELS[status] ?? status}
+        <span
+          class="ratio"
+          role="status"
+          aria-label={`${availableCount} of ${denominator} selected registries available`}
+        >
+          {availableCount}/{denominator}
         </span>
+        <span class="registry-dots" aria-hidden="true">
+          {selectedDescriptors.map((descriptor) => {
+            const cell = cellFor(descriptor.id);
+            const status = cell?.status ?? "pending";
+            return (
+              <span
+                key={descriptor.id}
+                class={`registry-dot dot-${status}`}
+                title={`${descriptor.label}: ${status}`}
+              />
+            );
+          })}
+        </span>
+        <button
+          type="button"
+          class="secondary expand-toggle"
+          aria-expanded={expanded}
+          aria-controls={`details-${candidate.name}`}
+          onClick={onToggle}
+        >
+          {expanded ? "Hide details" : "Details"}
+        </button>
       </div>
       <div class="candidate-meta">
         <span class="provenance" aria-label="Where this name came from">
@@ -254,25 +415,58 @@ function CandidateRow({ candidate }: { candidate: ComposedCandidate }) {
             <span key={kind}>{PROVENANCE_LABELS[kind] ?? kind}</span>
           ))}
         </span>
-        {slugDiffers && (
-          <span class="hint">
-            checked as <code>{npmSlug}</code> on npm
-          </span>
-        )}
-        {status === "available" && checkedAt && <span class="hint">checked {checkedAt}</span>}
-        {npm?.reason && status !== "available" && status !== "taken" && (
-          <span class="hint">{npm.reason}</span>
-        )}
-        {status === "taken" && (
-          <a
-            href={`https://www.npmjs.com/package/${encodeURIComponent(npmSlug)}`}
-            rel="noopener noreferrer"
-            target="_blank"
-          >
-            view on npm
-          </a>
+        {selectedDescriptors.some((descriptor) => cellFor(descriptor.id)?.cached) && (
+          <span class="cached-chip">cached</span>
         )}
       </div>
+      {expanded && (
+        <ul class="registry-results" id={`details-${candidate.name}`}>
+          {selectedDescriptors.map((descriptor) => (
+            <RegistryResultItem
+              key={descriptor.id}
+              descriptor={descriptor}
+              candidateName={candidate.name}
+              cell={cellFor(descriptor.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function RegistryResultItem(props: {
+  descriptor: RegistryDescriptor;
+  candidateName: string;
+  cell?: VerdictCell;
+}) {
+  const { descriptor, candidateName, cell } = props;
+  const status = cell?.status ?? "pending";
+  const checkedName = cell?.checkedName ?? candidateName;
+  const checkedAsDiffers = cell != null && cell.checkedName !== candidateName;
+  return (
+    <li class="registry-result">
+      <span class="registry-label">{descriptor.label}</span>
+      <span class={`status-pill status-${status}`}>
+        {status === "pending" ? "checking…" : (REGISTRY_STATUS_LABELS[status] ?? status)}
+      </span>
+      {cell?.cached && <span class="cached-chip">cached</span>}
+      {checkedAsDiffers && (
+        <span class="hint">
+          checked as <code>{checkedName}</code>
+        </span>
+      )}
+      {cell?.checkedAtMs != null && status !== "pending" && (
+        <span class="hint">checked {formatCheckedAt(cell.checkedAtMs)}</span>
+      )}
+      {cell?.reason && status !== "available" && status !== "taken" && (
+        <span class="hint">{cell.reason}</span>
+      )}
+      {status !== "pending" && (
+        <a href={descriptor.link(checkedName)} rel="noopener noreferrer" target="_blank">
+          view on {descriptor.label}
+        </a>
+      )}
     </li>
   );
 }

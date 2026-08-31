@@ -44,6 +44,7 @@ describe("negative capability guarantees", () => {
     const functionFiles = readdirSync(join(root, "netlify/functions"));
     const allowed = new Set([
       "search.ts",
+      "check.ts",
       "creative-search.ts",
       "auth-github-start.ts",
       "auth-github-callback.ts",
@@ -88,7 +89,9 @@ describe("negative capability guarantees", () => {
       expect(fetchImpl).not.toHaveBeenCalled();
 
       // The registry adapter itself also refuses scoped names.
-      expect(ctx.npmRegistry.validate("@scope/pkg")).toMatchObject({ ok: false });
+      expect(ctx.serverRegistries.get("npm")?.validate("@scope/pkg")).toMatchObject({
+        ok: false,
+      });
     } finally {
       context.cleanup();
     }

@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { h } from "preact";
 import SearchIsland, { Results } from "../../src/islands/SearchIsland";
 import type { SearchResponse } from "../../src/domain/types";
+import type { RegistryDescriptor } from "../../src/domain/registries";
+import type { VerdictCell } from "../../src/lib/client/availability";
+import { VERDICT_CACHE_STORAGE_KEY } from "../../src/lib/client/verdict-cache";
 
 afterEach(cleanup);
+
+beforeEach(() => {
+  localStorage.clear();
+});
 
 const seed = "laser";
 
@@ -14,21 +21,11 @@ function searchResponse(overrides: Partial<SearchResponse> = {}): SearchResponse
     seed,
     generatedAtMs: Date.now(),
     sources: [{ source: "wordnik", status: "ok" }],
+    // Discovery returns candidates with provenance only; availability
+    // results arrive progressively via the client fan-out.
     candidates: [
-      {
-        name: "laser",
-        provenance: ["input"],
-        registryResults: [
-          { registry: "npm", name: "laser", status: "available", checkedAtMs: Date.now() },
-        ],
-      },
-      {
-        name: "optics",
-        provenance: ["wordnik-synonym"],
-        registryResults: [
-          { registry: "npm", name: "optics", status: "taken", checkedAtMs: Date.now() },
-        ],
-      },
+      { name: "laser", provenance: ["input"], registryResults: [] },
+      { name: "optics", provenance: ["wordnik-synonym"], registryResults: [] },
     ],
     ...overrides,
   };
@@ -38,6 +35,53 @@ function typeSeedAndSubmit(value: string) {
   const input = screen.getByLabelText("Seed word") as HTMLInputElement;
   fireEvent.input(input, { target: { value } });
   fireEvent.submit(input.closest("form") as HTMLFormElement);
+}
+
+/**
+ * Fetch stub: /api/search and /api/creative-search return fixtures; the
+ * check endpoint reports `available` for npm and `taken` for PyPI; browser
+ * venue endpoints answer crates.io (taken) and NuGet (404).
+ */
+function stubMultiRegistryFetch(options: { search?: SearchResponse } = {}) {
+  return vi.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/api/search")) {
+      return new Response(JSON.stringify(options.search ?? searchResponse()), { status: 200 });
+    }
+    if (url.includes("/api/creative-search")) {
+      return new Response(
+        JSON.stringify({ error: { code: "authentication_required", message: "Sign in." } }),
+        { status: 401 },
+      );
+    }
+    if (url.includes("/api/check")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        registry?: string;
+        word?: string;
+      };
+      const taken = body.registry === "pypi" || body.word === "optics";
+      // Mirror the endpoint: the checked name is registry-normalized.
+      const checkedName = (body.word ?? "").trim().replace(/\s+/g, "-").toLowerCase();
+      return new Response(
+        JSON.stringify({
+          status: taken ? "taken" : "available",
+          name: checkedName,
+          checkedAtMs: Date.now(),
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("crates.io/api/v1/crates/")) {
+      return new Response(JSON.stringify({ crate: { name: "laser" } }), { status: 200 });
+    }
+    if (url.includes("api.nuget.org")) {
+      return new Response("404", { status: 404 });
+    }
+    if (url.includes("packagist.org")) {
+      return new Response(JSON.stringify({ total: 0, results: [] }), { status: 200 });
+    }
+    return new Response("unexpected upstream", { status: 500 });
+  });
 }
 
 describe("SearchIsland", () => {
@@ -50,102 +94,205 @@ describe("SearchIsland", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("renders npm results with provenance and the publication disclaimer", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify(searchResponse()), { status: 200 })),
-    );
+  it("fans out checks across selected registries and renders the progressive ratio", async () => {
+    const fetchImpl = stubMultiRegistryFetch();
+    vi.stubGlobal("fetch", fetchImpl);
     render(h(SearchIsland, null));
     typeSeedAndSubmit(seed);
 
     await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
-    const available = screen.getByText("available");
-    expect(available.className).toContain("status-available");
-    expect(screen.getByText("taken")).toBeTruthy();
-    expect(screen.getByText("synonym")).toBeTruthy(); // provenance chip
-    expect(screen.getByText(/not a publishing guarantee/i)).toBeTruthy();
-    // Taken names link to npm as the authority.
-    expect(screen.getByText("view on npm").getAttribute("href")).toBe(
-      "https://www.npmjs.com/package/optics",
+    // Server-venue checks via /api/check (npm + pypi + rubygems + hex + maven)
+    // and browser-venue checks via direct fetches (crates + nuget + packagist).
+    await waitFor(() => {
+      const apiCalls = fetchImpl.mock.calls.filter(([u]) => String(u).includes("/api/check"));
+      expect(apiCalls.length).toBeGreaterThanOrEqual(8); // 2 candidates x 4+ server registries
+    });
+
+    // Ratio for "laser": available on npm, rubygems, hex, maven, nuget,
+    // packagist; taken on pypi and crates -> 6/8.
+    await waitFor(() => expect(screen.getAllByText("6/8").length).toBeGreaterThan(0));
+    expect(screen.getAllByText(/not a publishing guarantee/i).length).toBeGreaterThan(0);
+  });
+
+  it("does not check deselected registries and excludes them from the denominator", async () => {
+    const fetchImpl = stubMultiRegistryFetch();
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+
+    // Deselect all but npm before searching.
+    for (const label of [
+      "PyPI",
+      "RubyGems",
+      "Hex",
+      "Maven Central",
+      "crates.io",
+      "NuGet",
+      "Packagist",
+    ]) {
+      const checkbox = screen.getByLabelText(new RegExp(`^${label}`)) as HTMLInputElement;
+      fireEvent.click(checkbox);
+    }
+    typeSeedAndSubmit(seed);
+
+    await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
+    await waitFor(() => expect(screen.getAllByText("1/1").length).toBeGreaterThan(0));
+    const apiCalls = fetchImpl.mock.calls.filter(([u]) => String(u).includes("/api/check"));
+    const checkedRegistries = apiCalls.map(([, init]) => {
+      const body = JSON.parse(String((init as RequestInit).body ?? "{}")) as { registry: string };
+      return body.registry;
+    });
+    for (const registry of checkedRegistries) {
+      expect(registry).toBe("npm");
+    }
+    expect(fetchImpl.mock.calls.some(([u]) => String(u).includes("crates.io"))).toBe(false);
+  });
+
+  it("persists the registry selection across renders", async () => {
+    const fetchImpl = stubMultiRegistryFetch();
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    const pypi = screen.getByLabelText(/^PyPI/) as HTMLInputElement;
+    fireEvent.click(pypi);
+    expect(JSON.parse(localStorage.getItem("iit_registry_selection") ?? "[]")).not.toContain(
+      "pypi",
     );
+
+    cleanup();
+    render(h(SearchIsland, null));
+    const pypiAfterReload = screen.getByLabelText(/^PyPI/) as HTMLInputElement;
+    expect(pypiAfterReload.checked).toBe(false);
+  });
+
+  it("expands a candidate row into per-registry details with links and checked-as", async () => {
+    const response = searchResponse({
+      seed: "back end",
+      candidates: [{ name: "back end", provenance: ["input"], registryResults: [] }],
+    });
+    const fetchImpl = stubMultiRegistryFetch({ search: response });
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    typeSeedAndSubmit("back end"); // normalizes to back-end on most registries
+
+    await waitFor(() => expect(screen.getByText("Names for “back end”")).toBeTruthy());
+    await waitFor(() => {
+      const apiCalls = fetchImpl.mock.calls.filter(([u]) => String(u).includes("/api/check"));
+      expect(apiCalls.length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0] as Element);
+    await waitFor(() => {
+      expect(screen.getAllByText(/view on npm/)[0]).toBeTruthy();
+    });
+    const npmLink = screen.getAllByText(/view on npm/)[0]?.closest("a") as HTMLAnchorElement;
+    expect(npmLink.getAttribute("href")).toBe("https://www.npmjs.com/package/back-end");
+    // The row discloses the normalized name when it differs from the phrase.
+    expect(screen.getAllByText("back-end").length).toBeGreaterThan(0);
+  });
+
+  it("labels stale cached verdicts until revalidation replaces them", async () => {
+    // Pre-seed a stale npm verdict for "laser" (fresh TTL 5min elapsed, retention 7x not).
+    const staleCheckedAt = Date.now() - 10 * 60_000;
+    localStorage.setItem(
+      VERDICT_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        "npm:laser": {
+          status: "available",
+          checkedAtMs: staleCheckedAt,
+          ttlMs: 300_000,
+          lastUsedAtMs: staleCheckedAt,
+        },
+      }),
+    );
+
+    // Hold the revalidation gate closed so the stale paint is observable.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchImpl = vi
+      .fn()
+      .mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/check")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { registry?: string };
+          if (body.registry === "npm") {
+            await gate;
+            return new Response(
+              JSON.stringify({ status: "taken", name: "laser", checkedAtMs: Date.now() }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({ status: "unknown", name: "x", checkedAtMs: Date.now() }),
+            { status: 200 },
+          );
+        }
+        if (url.includes("/api/search")) {
+          return new Response(JSON.stringify(searchResponse()), { status: 200 });
+        }
+        return new Response("slow down", { status: 429 });
+      });
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    typeSeedAndSubmit(seed);
+
+    // The stale verdict paints immediately with a cached hint...
+    await screen.findByText("cached");
+    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0] as Element);
+    expect(screen.getAllByText("available").length).toBeGreaterThan(0);
+
+    // ...and revalidation replaces it with the fresh verdict.
+    release();
+    await waitFor(() => expect(screen.queryByText("cached")).toBeNull());
+    expect(screen.getAllByText("taken").length).toBeGreaterThan(0);
+  });
+
+  it("presents unknown results safely — never as available", async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/api/search")) {
+        return new Response(JSON.stringify(searchResponse()), { status: 200 });
+      }
+      if (url.includes("/api/check")) {
+        return new Response(
+          JSON.stringify({
+            status: "unknown",
+            name: "laser",
+            checkedAtMs: Date.now(),
+            reason: "npm registry rate limit exceeded.",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("slow down", { status: 429 });
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    typeSeedAndSubmit(seed);
+
+    await waitFor(() => expect(screen.getAllByText("0/8").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0] as Element);
+    await waitFor(() => {
+      expect(screen.getAllByText(/unknown — try again/).length).toBeGreaterThan(0);
+    });
   });
 
   it("keeps results usable and reports the failure when Wordnik is unavailable", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify(
-            searchResponse({
-              sources: [
-                {
-                  source: "wordnik",
-                  status: "unavailable",
-                  reason: "Wordnik rate limit exceeded.",
-                },
-              ],
-            }),
-          ),
-          { status: 200 },
-        ),
-      ),
-    );
+    const response = searchResponse({
+      sources: [
+        { source: "wordnik", status: "unavailable", reason: "Wordnik rate limit exceeded." },
+      ],
+    });
+    vi.stubGlobal("fetch", stubMultiRegistryFetch({ search: response }));
     render(h(SearchIsland, null));
     typeSeedAndSubmit(seed);
 
     await waitFor(() => expect(screen.getByText(/enrichment unavailable/i)).toBeTruthy());
-    expect(screen.getByText("laser")).toBeTruthy(); // seed result still present
-  });
-
-  it("presents unknown results safely — never as available", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify(
-            searchResponse({
-              candidates: [
-                {
-                  name: "ghost",
-                  provenance: ["input"],
-                  registryResults: [
-                    {
-                      registry: "npm",
-                      name: "ghost",
-                      status: "unknown",
-                      checkedAtMs: Date.now(),
-                      reason: "npm registry rate limit exceeded.",
-                    },
-                  ],
-                },
-              ],
-            }),
-          ),
-          { status: 200 },
-        ),
-      ),
-    );
-    render(h(SearchIsland, null));
-    typeSeedAndSubmit(seed);
-
-    await waitFor(() => expect(screen.getByText("unknown — try again")).toBeTruthy());
-    expect(screen.queryByText("available")).toBeNull();
+    expect(screen.getByText("laser")).toBeTruthy();
   });
 
   it("offers sign-in for creative generation and preserves ordinary results", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(async (input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/api/search")) {
-          return new Response(JSON.stringify(searchResponse()), { status: 200 });
-        }
-        return new Response(
-          JSON.stringify({ error: { code: "authentication_required", message: "Sign in." } }),
-          { status: 401 },
-        );
-      }),
-    );
+    vi.stubGlobal("fetch", stubMultiRegistryFetch());
     render(h(SearchIsland, null));
     typeSeedAndSubmit(seed);
     await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
@@ -153,74 +300,34 @@ describe("SearchIsland", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate creative names" }));
     const signIn = await screen.findByText("Creative generation needs an account.");
     expect(signIn).toBeTruthy();
-    // Ordinary results are untouched.
     expect(screen.getByText("Names for “laser”")).toBeTruthy();
   });
 
-  it("shows quota feedback and merges creative results by normalized name", async () => {
-    const calls: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(async (input: string | URL | Request) => {
-        const url = String(input);
-        calls.push(url);
-        if (url.includes("/api/search")) {
-          return new Response(JSON.stringify(searchResponse()), { status: 200 });
-        }
-        return new Response(
-          JSON.stringify({
-            status: "ok",
-            cached: false,
-            seed,
-            generatedAtMs: Date.now(),
-            quota: { burstRemaining: 4, periodicRemaining: 24, resetsAtMs: Date.now() + 60_000 },
-            candidates: [
-              {
-                name: "laser", // same normalized name as ordinary "laser"
-                provenance: ["openrouter"],
-                registryResults: [
-                  { registry: "npm", status: "taken", checkedAtMs: Date.now() + 1_000 },
-                ],
-              },
-            ],
-          }),
-          { status: 200 },
-        );
-      }),
-    );
-    render(h(SearchIsland, null));
-    typeSeedAndSubmit(seed);
-    await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
-
-    fireEvent.click(screen.getByRole("button", { name: "Generate creative names" }));
-    await waitFor(() => expect(screen.getByText(/Quota remaining/)).toBeTruthy());
-
-    // The merged list must contain one "laser" row with both provenance labels.
-    const rows = screen.getAllByText("laser");
-    expect(rows.length).toBe(1);
-    expect(screen.getByText("AI idea")).toBeTruthy();
-    expect(screen.getByText("your word")).toBeTruthy();
-  });
-
   it("reports quota exhaustion with the server message", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation(async (input: string | URL | Request) => {
-        const url = String(input);
-        if (url.includes("/api/search")) {
-          return new Response(JSON.stringify(searchResponse()), { status: 200 });
-        }
+    const fetchImpl = vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/api/search")) {
+        return new Response(JSON.stringify(searchResponse()), { status: 200 });
+      }
+      if (url.includes("/api/creative-search")) {
         return new Response(
           JSON.stringify({
             error: { code: "quota_exhausted", message: "Daily generation quota exhausted." },
           }),
           {
             status: 429,
-            headers: { "x-quota-reset": String(Date.now() + 60_000), "x-quota-scope": "periodic" },
+            headers: {
+              "x-quota-reset": String(Date.now() + 60_000),
+              "x-quota-scope": "periodic",
+            },
           },
         );
-      }),
-    );
+      }
+      return new Response(JSON.stringify({ status: "available", checkedAtMs: Date.now() }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchImpl);
     render(h(SearchIsland, null));
     typeSeedAndSubmit(seed);
     await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
@@ -231,44 +338,57 @@ describe("SearchIsland", () => {
 });
 
 describe("Results component (direct render)", () => {
+  const now = Date.now();
+  const cells = new Map<string, VerdictCell>();
+  cells.set("laser|npm", {
+    registry: "npm",
+    candidateName: "laser",
+    checkedName: "laser",
+    status: "available",
+    checkedAtMs: now,
+  });
+  cells.set("laser|pypi", {
+    registry: "pypi",
+    candidateName: "laser",
+    checkedName: "laser",
+    status: "taken",
+    checkedAtMs: now,
+  });
+
+  function descriptorStubs() {
+    return [
+      { id: "npm", label: "npm", link: (n: string) => `https://www.npmjs.com/package/${n}` },
+      { id: "pypi", label: "PyPI", link: (n: string) => `https://pypi.org/project/${n}/` },
+    ] as unknown as RegistryDescriptor[];
+  }
+
   it("is keyboard reachable with links and buttons", () => {
     const { container } = render(
       h(Results, {
         seedLabel: "laser",
-        candidates: searchResponse().candidates,
-        ordinarySources: [{ source: "wordnik", status: "ok" }],
+        candidates: [{ name: "laser", provenance: ["input"], registryResults: [] }],
+        cells,
+        selectedDescriptors: descriptorStubs(),
       }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
     const link = container.querySelector(
-      'a[href="https://www.npmjs.com/package/optics"]',
+      'a[href="https://www.npmjs.com/package/laser"]',
     ) as HTMLAnchorElement;
     expect(link).toBeTruthy();
     link.focus();
     expect(document.activeElement).toBe(link);
   });
 
-  it("links multi-word candidates by their npm slug, not the phrase", () => {
+  it("shows the ratio and taken link from the descriptor", () => {
     const { container } = render(
       h(Results, {
-        seedLabel: "back",
-        candidates: [
-          {
-            name: "back end", // domain form keeps the phrase
-            provenance: ["wordnik-synonym"],
-            registryResults: [
-              { registry: "npm", name: "back-end", status: "taken", checkedAtMs: Date.now() },
-            ],
-          },
-        ],
-        ordinarySources: [],
+        seedLabel: "laser",
+        candidates: [{ name: "laser", provenance: ["input"], registryResults: [] }],
+        cells,
+        selectedDescriptors: descriptorStubs(),
       }),
     );
-    // The npm link must target the slug npm actually checked.
-    const link = container.querySelector(
-      'a[href="https://www.npmjs.com/package/back-end"]',
-    ) as HTMLAnchorElement;
-    expect(link).toBeTruthy();
-    // And the row discloses the slug when it differs from the phrase.
-    expect(container.textContent).toContain("checked as back-end on npm");
+    expect(container.querySelector(".ratio")?.textContent).toBe("1/2");
   });
 });

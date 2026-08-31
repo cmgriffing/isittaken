@@ -82,8 +82,8 @@ describe("cache repository", () => {
 
   it("separates families with the same key", async () => {
     const cache = createCacheRepository(client, clock);
-    await cache.write("npm-available", "shared", '"a"', { freshForMs: 100, retainForMs: 100 });
-    const other = await cache.read("npm-taken", "shared");
+    await cache.write("registry-available", "shared", '"a"', { freshForMs: 100, retainForMs: 100 });
+    const other = await cache.read("registry-taken", "shared");
     expect(other.status).toBe("miss");
   });
 

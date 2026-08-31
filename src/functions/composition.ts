@@ -6,9 +6,11 @@ import { LibsqlSessionRepository } from "../db/repositories/session-repository";
 import { LibsqlUserRepository } from "../db/repositories/user-repository";
 import { LibsqlQuotaRepository } from "../db/repositories/quota-repository";
 import { createWordnikSource } from "../adapters/wordnik/source";
-import { createNpmRegistry } from "../adapters/npm/registry";
 import { createOpenRouterProvider } from "../adapters/openrouter/provider";
-import { cachePolicyFor } from "../domain/cache-policy";
+import { createServerRegistryAdapter } from "../adapters/registries/server-adapter";
+import { cachePolicyFor, retentionFor } from "../domain/cache-policy";
+import { REGISTRY_LINEUP, registryById } from "../domain/registries";
+import type { RegistryDescriptor } from "../domain/registries";
 import type {
   CacheRepository,
   Clock,
@@ -20,7 +22,8 @@ import type {
   SessionRepository,
   UserRepository,
 } from "../domain/ports";
-import type { ServerConfig } from "../config/server";
+import type { RegistryId } from "../domain/types";
+import type { ServerConfig, ServerRegistryId } from "../config/server";
 import { createRateLimiter, type RateLimiter } from "../lib/rate-limit";
 import { logger } from "../lib/logger";
 
@@ -34,7 +37,12 @@ export interface AppContext {
   users: UserRepository;
   quotas: QuotaRepository;
   wordnikSource: CandidateSource;
-  npmRegistry: PackageRegistry;
+  /** Server-venue registry adapters, keyed by registry id. */
+  serverRegistries: ReadonlyMap<RegistryId, PackageRegistry>;
+  /** Every supported registry descriptor (client metadata included). */
+  registryDescriptors: readonly RegistryDescriptor[];
+  /** Per-(ip, registry) check rate limiters, keyed by registry id. */
+  registryRateLimiters: ReadonlyMap<RegistryId, RateLimiter>;
   openRouterProvider: CreativeProvider;
   searchRateLimiter: RateLimiter;
   creativeRateLimiter: RateLimiter;
@@ -91,17 +99,39 @@ export function createAppContext(
     fetchImpl: overrides.fetchImpl,
   });
 
-  const npmRegistry = createNpmRegistry({
-    origin: config.npm.registryOrigin,
-    timeoutMs: config.npm.timeoutMs,
-    clock,
-    cache,
-    cachePolicies: {
-      "npm-available": cachePolicyFor("npm-available", config),
-      "npm-taken": cachePolicyFor("npm-taken", config),
-    },
-    fetchImpl: overrides.fetchImpl,
-  });
+  // Server-venue adapters are thin descriptor-driven wrappers; the registry
+  // lineup in `src/domain/registries` remains the single source of truth.
+  const serverRegistries = new Map<RegistryId, PackageRegistry>();
+  const registryRateLimiters = new Map<RegistryId, RateLimiter>();
+  for (const descriptor of REGISTRY_LINEUP) {
+    if (descriptor.venue !== "server") continue;
+    const settings = config.registries[descriptor.id as ServerRegistryId];
+    serverRegistries.set(
+      descriptor.id,
+      createServerRegistryAdapter({
+        descriptor,
+        origin: settings.origin,
+        timeoutMs: settings.timeoutMs,
+        clock,
+        cache,
+        cachePolicies: {
+          available: {
+            freshForMs: settings.availableTtlMs,
+            retainForMs: retentionFor("registry-available", settings.availableTtlMs),
+          },
+          taken: {
+            freshForMs: settings.takenTtlMs,
+            retainForMs: retentionFor("registry-taken", settings.takenTtlMs),
+          },
+        },
+        fetchImpl: overrides.fetchImpl,
+      }),
+    );
+    registryRateLimiters.set(
+      descriptor.id,
+      createRateLimiter({ limit: settings.rateLimitPerMinute, windowMs: 60_000 }),
+    );
+  }
 
   const openRouterProvider = createOpenRouterProvider({
     apiKey: config.openrouter.apiKey,
@@ -123,7 +153,9 @@ export function createAppContext(
     users,
     quotas,
     wordnikSource,
-    npmRegistry,
+    serverRegistries,
+    registryDescriptors: REGISTRY_LINEUP,
+    registryRateLimiters,
     openRouterProvider,
     searchRateLimiter: createRateLimiter({
       limit: config.rateLimit.publicSearchPerMinute,
@@ -134,4 +166,9 @@ export function createAppContext(
       windowMs: 60_000,
     }),
   };
+}
+
+/** Resolve a registry descriptor by id (undefined when unsupported). */
+export function registryDescriptor(id: string): RegistryDescriptor | undefined {
+  return registryById(id);
 }

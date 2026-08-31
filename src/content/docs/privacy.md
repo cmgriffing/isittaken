@@ -6,9 +6,12 @@ description: What we store, what we don't, and for how long.
 ## Without an account
 
 You can search anonymously. We do not store your searches. We keep short-
-lived caches of upstream lookups (Wordnik results, npm availability) to
-protect those services and keep the site fast. Cache entries expire within
-minutes to days depending on the kind of data, and scheduled jobs prune them.
+lived caches of upstream lookups (Wordnik results, server-side registry
+availability verdicts) to protect those services and keep the site fast.
+Browser-venue registries (crates.io, NuGet, Packagist) are fetched directly
+by your browser and their verdicts stay in your browser's local storage —
+they are never reported back to us. Cache entries expire within minutes to
+days depending on the kind of data, and scheduled jobs prune them.
 
 ## With an account (optional)
 

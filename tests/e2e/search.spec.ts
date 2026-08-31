@@ -3,28 +3,19 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * Browser tests run against the static build (`astro preview`) with the API
  * surface intercepted. This verifies hydration, keyboard operation,
- * progressive rendering, and static content routes without real upstreams.
+ * progressive multi-registry rendering, and static content routes without
+ * real upstreams.
  */
 
 const searchFixture = {
   seed: "laser",
   generatedAtMs: Date.now(),
   sources: [{ source: "wordnik", status: "ok" }],
+  // Discovery returns candidates with provenance only; availability
+  // verdicts stream in from the client fan-out.
   candidates: [
-    {
-      name: "laser",
-      provenance: ["input"],
-      registryResults: [
-        { registry: "npm", name: "laser", status: "available", checkedAtMs: Date.now() },
-      ],
-    },
-    {
-      name: "optics",
-      provenance: ["wordnik-synonym"],
-      registryResults: [
-        { registry: "npm", name: "optics", status: "taken", checkedAtMs: Date.now() },
-      ],
-    },
+    { name: "laser", provenance: ["input"], registryResults: [] },
+    { name: "optics", provenance: ["wordnik-synonym"], registryResults: [] },
   ],
 };
 
@@ -38,15 +29,7 @@ const creativeFixture = {
     {
       name: "laserly",
       provenance: ["openrouter"],
-      registryResults: [
-        {
-          registry: "npm",
-          name: "laserly",
-          status: "unknown",
-          checkedAtMs: Date.now(),
-          reason: "npm registry rate limit exceeded.",
-        },
-      ],
+      registryResults: [],
     },
   ],
 };
@@ -81,6 +64,30 @@ async function mockApis(
       headers: creative.headers,
     });
   });
+  // Server-venue checks: taken only for npm/optics; everything else available.
+  await page.route("**/api/check", (route) => {
+    const body = route.request().postDataJSON() as { registry: string; word: string };
+    const status = body.registry === "npm" && body.word === "optics" ? "taken" : "available";
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status, name: body.word, checkedAtMs: Date.now() }),
+    });
+  });
+  // Browser-venue registries answer directly (CORS endpoints).
+  await page.route("**/crates.io/**", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+  );
+  await page.route("**/api.nuget.org/**", (route) =>
+    route.fulfill({ status: 404, contentType: "application/json", body: "{}" }),
+  );
+  await page.route("**/packagist.org/**", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ total: 0, results: [] }),
+    }),
+  );
 }
 
 test.describe("static shell", () => {
@@ -103,7 +110,7 @@ test.describe("static shell", () => {
 });
 
 test.describe("search island (hydrated)", () => {
-  test("keyboard operation: type a seed, press Enter, see results with statuses", async ({
+  test("keyboard operation: type a seed, press Enter, see progressive multi-registry results", async ({
     page,
   }) => {
     await mockApis(page);
@@ -114,19 +121,18 @@ test.describe("search island (hydrated)", () => {
     await page.keyboard.press("Enter");
 
     await expect(page.getByText("Names for “laser”")).toBeVisible();
-    await expect(page.locator(".status-available")).toHaveText("available");
-    await expect(page.locator(".status-taken")).toHaveText("taken");
+    // Progressive ratio: every selected registry answered (7 available for
+    // "laser" — npm/optics is the single taken — over 8 selected).
+    await expect(page.getByText("7/8").first()).toBeVisible();
     await expect(page.getByText(/not a publishing guarantee/i)).toBeVisible();
-    // npm remains the authority for taken names.
-    await expect(page.getByRole("link", { name: "view on npm" })).toHaveAttribute(
-      "target",
-      "_blank",
-    );
+
+    // Expanding the optics row shows the taken pill and the npm link.
+    await page.getByRole("button", { name: "Details" }).nth(1).click();
+    await expect(page.locator(".status-taken").first()).toHaveText("taken");
+    await expect(page.getByRole("link", { name: "view on npm" }).first()).toBeAttached();
   });
 
-  test("progressive rendering: creative failure preserves ordinary results and shows unknown safely", async ({
-    page,
-  }) => {
+  test("progressive rendering: creative failure preserves ordinary results", async ({ page }) => {
     await mockApis(page, {
       creative: {
         status: 502,

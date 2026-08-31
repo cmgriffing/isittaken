@@ -42,7 +42,12 @@ export interface PackageRegistry {
   lookup(name: string): Promise<RegistryLookupResult>;
 }
 
-export type CacheFamily = "wordnik" | "openrouter" | "npm-available" | "npm-taken";
+/**
+ * Generic registry cache families carry the registry id in the cache key and
+ * the verdict in the cached value; per-verdict freshness TTLs are applied at
+ * write time (see `CacheWritePolicy`).
+ */
+export type CacheFamily = "wordnik" | "openrouter" | "registry-available" | "registry-taken";
 
 export type CacheRead =
   | { status: "fresh"; valueJson: string }

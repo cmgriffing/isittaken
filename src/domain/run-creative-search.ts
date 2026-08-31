@@ -1,13 +1,6 @@
-import type {
-  CacheRepository,
-  Clock,
-  CreativeProvider,
-  PackageRegistry,
-  QuotaRepository,
-} from "./ports";
+import type { CacheRepository, Clock, CreativeProvider, QuotaRepository } from "./ports";
 import { normalizeAndDedupeCandidates } from "./normalize-candidates";
-import { mapWithConcurrency } from "../lib/concurrency";
-import type { ComposedCandidate, RegistryResult } from "./types";
+import type { ComposedCandidate } from "./types";
 import type { SearchLimits } from "./validate-search-request";
 import { normalizeCandidateValue } from "./normalize-candidates";
 import { decodeVersionedValue, encodeVersionedValue } from "./cache-value";
@@ -16,12 +9,10 @@ export const CREATIVE_CACHE_VALUE_VERSION = 1;
 
 export interface CreativeDeps {
   provider: CreativeProvider;
-  registries: readonly PackageRegistry[];
   quotas: QuotaRepository;
   clock: Clock;
   userId: string;
   limits: SearchLimits;
-  registryConcurrency: number;
   quota: {
     userBurstPerMinute: number;
     userPeriodicPerDay: number;
@@ -99,7 +90,7 @@ export async function runCreativeSearch(
             status: "ok",
             cached: true,
             seed: input.seed,
-            candidates: await checkAvailability(data.candidates, deps),
+            candidates: composeCandidates(data.candidates, deps),
             generatedAtMs: nowMs,
             quota: await quotaSnapshot(deps, nowMs),
           };
@@ -208,7 +199,7 @@ export async function runCreativeSearch(
     status: "ok",
     cached: false,
     seed: input.seed,
-    candidates: await checkAvailability(generation.candidates, deps),
+    candidates: composeCandidates(generation.candidates, deps),
     generatedAtMs: deps.clock.nowMs(),
     quota: await quotaSnapshot(deps, nowMs),
   };
@@ -232,49 +223,18 @@ async function quotaSnapshot(
   };
 }
 
-/** Validate, dedupe, and run bounded-concurrency npm lookups for names. */
-async function checkAvailability(
+/** Normalize, validate, and dedupe generated names into candidates. */
+function composeCandidates(
   rawNames: readonly string[],
-  deps: Pick<CreativeDeps, "registries" | "limits" | "registryConcurrency" | "clock">,
-): Promise<ComposedCandidate[]> {
+  deps: Pick<CreativeDeps, "limits">,
+): ComposedCandidate[] {
   const raw = rawNames.map((value) => ({ value, provenance: "openrouter" as const }));
   const candidates = normalizeAndDedupeCandidates(raw, { limits: deps.limits });
-
-  const registryResults = await Promise.all(
-    candidates.map(async (candidate): Promise<RegistryResult[]> => {
-      const results: RegistryResult[] = [];
-      for (const registry of deps.registries) {
-        const validation = registry.validate(candidate.normalized);
-        if (!validation.ok) {
-          results.push({
-            registry: registry.id,
-            name: candidate.normalized,
-            status: "invalid",
-            checkedAtMs: deps.clock.nowMs(),
-            reason: validation.reason,
-          });
-          continue;
-        }
-        try {
-          const lookup = await registry.lookup(validation.name);
-          results.push({ registry: registry.id, name: validation.name, ...lookup });
-        } catch (error) {
-          results.push({
-            registry: registry.id,
-            name: validation.name,
-            status: "unknown",
-            checkedAtMs: deps.clock.nowMs(),
-            reason: error instanceof Error ? error.message : "Registry lookup failed.",
-          });
-        }
-      }
-      return results;
-    }),
-  );
-
-  return mapWithConcurrency(candidates, 1, async (candidate, index) => ({
+  // Registry results are absent at generation time; the client fans out
+  // availability checks per registry.
+  return candidates.map((candidate) => ({
     name: candidate.normalized,
     provenance: candidate.provenance,
-    registryResults: registryResults[index] ?? [],
+    registryResults: [],
   }));
 }

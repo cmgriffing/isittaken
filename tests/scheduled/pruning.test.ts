@@ -51,12 +51,12 @@ async function seedCache(family: CacheFamily, keys: string[], expired: boolean) 
 
 describe("pruning service", () => {
   it("deletes only its assigned family and respects fresh entries", async () => {
-    await seedCache("npm-available", ["a1", "a2"], true);
-    await seedCache("npm-taken", ["t1"], true);
+    await seedCache("registry-available", ["a1", "a2"], true);
+    await seedCache("registry-taken", ["t1"], true);
     await seedCache("wordnik", ["w1"], true);
-    await seedCache("npm-available", ["fresh1"], false);
+    await seedCache("registry-available", ["fresh1"], false);
 
-    const summary = await pruneCacheFamily("npm-available", db, options(10_000));
+    const summary = await pruneCacheFamily("registry-available", db, options(10_000));
 
     expect(summary.deleted).toBe(2); // a1, a2; fresh1 survives
     expect(summary.stoppedEarly).toBe(false);
@@ -68,7 +68,7 @@ describe("pruning service", () => {
     expect(Number(wordnik.rows[0]?.["n"])).toBe(1); // untouched: family isolation
 
     const taken = await db.execute({
-      sql: "SELECT COUNT(*) AS n FROM cache_entries WHERE family = 'npm-taken'",
+      sql: "SELECT COUNT(*) AS n FROM cache_entries WHERE family = 'registry-taken'",
       args: [],
     });
     expect(Number(taken.rows[0]?.["n"])).toBe(1); // untouched: disjoint ownership
@@ -84,18 +84,18 @@ describe("pruning service", () => {
 
   it("exits before the deadline when work remains, deleting nothing", async () => {
     await seedCache(
-      "npm-available",
+      "registry-available",
       Array.from({ length: 50 }, (_, i) => `bulk-${i}`),
       true,
     );
     // Deadline already passed: report remaining work, delete nothing, no hang.
-    const passed = await pruneCacheFamily("npm-available", db, options(0));
+    const passed = await pruneCacheFamily("registry-available", db, options(0));
     expect(passed.deleted).toBe(0);
     expect(passed.stoppedEarly).toBe(true);
 
     // Positive deadline but margin dominates: at most nothing more, early exit.
     const tiny = await pruneCacheFamily(
-      "npm-available",
+      "registry-available",
       db,
       options(1, { marginMs: 10_000, batchSize: 10 }),
     );
