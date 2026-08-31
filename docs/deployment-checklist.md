@@ -16,10 +16,10 @@ Recorded from the full verification run (`pnpm verify`) on 2026-08-30.
 
 ## Pre-deploy actions (environment-specific)
 
-1. **Database**: create Turso DB, set `DATABASE_URL` + `DATABASE_AUTH_TOKEN`, run `pnpm migrate` against it once.
+1. **Database**: create Turso DB, set `DATABASE_URL` + `DATABASE_AUTH_TOKEN` with **builds** scope. Migrations apply during each deploy (`pnpm migrate && pnpm build` in `netlify.toml`); verify `[migrate]` lines in the build log — `applied` on the first deploy, `already applied` on later ones.
 2. **GitHub OAuth App**: register per environment with callback `<site>/api/auth/github/callback`; set `GITHUB_CLIENT_ID`/`SECRET`.
 3. **Wordnik**: set `WORDNIK_API_KEY` (optional — search degrades gracefully without it).
 4. **OpenRouter**: set `OPENROUTER_API_KEY`, confirm `OPENROUTER_MODEL` supports structured output; start with a low `QUOTA_APP_DAILY_GENERATIONS`.
 5. **Sessions**: leave `SESSION_COOKIE_SECURE` unset (production defaults it on); set `PUBLIC_SITE_URL` to the production origin.
 6. **Pruning schedules**: deploy, invoke each shard once (manual invocation), then enable schedules.
-7. **Rollback**: see docs/deployment.md — per-route redirects, provider kill-switches via env vars, additive migrations only.
+7. **Rollback**: see docs/deployment.md — per-route redirects, provider kill-switches via env vars; to stop build-time migrations, revert `netlify.toml`'s command to `pnpm build`; migrations are additive-only, so no schema rollback is ever required.

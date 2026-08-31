@@ -5,19 +5,19 @@
 Copy `.env.example` to `.env` for local development. In Netlify, configure
 the same variables under **Site settings → Environment variables**.
 
-| Variable                                            | Required       | Notes                                                                                                                                                      |
-| --------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                      | yes            | `file:./local.db` locally; `libsql://…turso.io` in production. Production refuses `file:` URLs unless `ALLOW_LOCAL_DB_IN_PRODUCTION=true` (previews only). |
-| `DATABASE_AUTH_TOKEN`                               | Turso only     | Turso auth token; omit for local SQLite.                                                                                                                   |
-| `WORDNIK_API_KEY`                                   | for enrichment | Without it, Wordnik reports as `skipped` and search still works.                                                                                           |
-| `NPM_REGISTRY_ORIGIN`                               | no             | Defaults to `https://registry.npmjs.org`. Clients cannot override it.                                                                                      |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`         | for login      | Register one OAuth App per environment (below).                                                                                                            |
-| `OPENROUTER_API_KEY`                                | for creativity | Without it, creative generation fails closed; ordinary search is unaffected.                                                                               |
-| `OPENROUTER_MODEL`                                  | no             | Must support structured output (JSON Schema response format). Default `openai/gpt-4o-mini`.                                                                |
-| `SESSION_COOKIE_SECURE`                             | no             | Defaults to `true` in production; set `false` only for `http://localhost`.                                                                                 |
-| `PUBLIC_SITE_URL`                                   | yes in prod    | Used for same-origin enforcement on cookie-authenticated POSTs.                                                                                            |
-| `CACHE_TTL_*`, `QUOTA_*`, `RATE_LIMIT_*`, `LIMIT_*` | no             | Safe defaults are documented in `.env.example`; adjustable without schema changes.                                                                         |
-| `LOG_LEVEL`                                         | no             | `debug` \| `info` \| `warn` \| `error` (default `info`).                                                                                                   |
+| Variable                                            | Required       | Notes                                                                                                                                                                                                                                                        |
+| --------------------------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                                      | yes            | `file:./local.db` locally; `libsql://…turso.io` in production. Production refuses `file:` URLs unless `ALLOW_LOCAL_DB_IN_PRODUCTION=true` (previews only). Must be scoped to **builds** as well as functions: every deploy runs migrations during the build. |
+| `DATABASE_AUTH_TOKEN`                               | Turso only     | Turso auth token; omit for local SQLite. Must be scoped to **builds** as well as functions.                                                                                                                                                                  |
+| `WORDNIK_API_KEY`                                   | for enrichment | Without it, Wordnik reports as `skipped` and search still works.                                                                                                                                                                                             |
+| `NPM_REGISTRY_ORIGIN`                               | no             | Defaults to `https://registry.npmjs.org`. Clients cannot override it.                                                                                                                                                                                        |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`         | for login      | Register one OAuth App per environment (below).                                                                                                                                                                                                              |
+| `OPENROUTER_API_KEY`                                | for creativity | Without it, creative generation fails closed; ordinary search is unaffected.                                                                                                                                                                                 |
+| `OPENROUTER_MODEL`                                  | no             | Must support structured output (JSON Schema response format). Default `openai/gpt-4o-mini`.                                                                                                                                                                  |
+| `SESSION_COOKIE_SECURE`                             | no             | Defaults to `true` in production; set `false` only for `http://localhost`.                                                                                                                                                                                   |
+| `PUBLIC_SITE_URL`                                   | yes in prod    | Used for same-origin enforcement on cookie-authenticated POSTs.                                                                                                                                                                                              |
+| `CACHE_TTL_*`, `QUOTA_*`, `RATE_LIMIT_*`, `LIMIT_*` | no             | Safe defaults are documented in `.env.example`; adjustable without schema changes.                                                                                                                                                                           |
+| `LOG_LEVEL`                                         | no             | `debug` \| `info` \| `warn` \| `error` (default `info`).                                                                                                                                                                                                     |
 
 ## Local SQLite setup and migrations
 
@@ -31,6 +31,34 @@ pnpm dev                      # astro dev with Netlify env emulation
 Migrations live in `src/db/migrations.mjs` (shared by the app and the CLI)
 and are tracked in the `_migrations` table. `node scripts/run-migrations.mjs`
 is what `pnpm migrate` runs; it reads `.env` itself.
+
+## Schema migrations on deploy
+
+The Netlify build command is `pnpm migrate && pnpm build` (see
+`netlify.toml`), so the deploy itself is the migration gate:
+
+- **Per-context databases by configuration**: the runner migrates whatever
+  `DATABASE_URL` / `DATABASE_AUTH_TOKEN` its environment provides — there is
+  no deploy-context logic in code. Pointing a different deploy context at a
+  different database is purely a Netlify env-var change.
+- **Env vars must be build-visible**: `DATABASE_URL` /
+  `DATABASE_AUTH_TOKEN` need **builds** scope in Netlify. A function-only
+  scope makes the build's migration step fail and blocks the deploy.
+- **A migration failure fails the deploy**: pending migrations apply before
+  the site builds; on failure the build aborts and the previous deploy keeps
+  serving. Check the build log for `[migrate]` lines (`applied`,
+  `already applied`, `lost the race`).
+- **Additive-only contract**: migrations are pure additive, idempotent DDL
+  (`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`). Destructive
+  changes follow the expand/contract two-deploy rule: deploy N adds the new
+  shape (and backfills idempotently); deploy N+1 — after no deployed code
+  reads the old shape — removes it. Never drop or rename in the same deploy
+  that ships code using the new shape. The contract is documented in the
+  `src/db/migrations.mjs` header comment.
+- **Separate preview/branch DB (future)**: creating one is a configuration
+  change only — scope a different `DATABASE_URL` (plus token) to the
+  `deploy-preview` or branch-deploy context and that context's builds will
+  migrate that database.
 
 ## GitHub OAuth registration
 
@@ -52,7 +80,11 @@ turso db show isittaken --url        # → DATABASE_URL (libsql://…)
 turso db tokens create isittaken     # → DATABASE_AUTH_TOKEN
 ```
 
-Set both in Netlify, then run migrations against production once:
+Set both in Netlify with **builds** scope (see "Schema migrations on
+deploy" above): every deploy applies pending migrations to the database its
+context points at before building the site, so a new database is provisioned
+by deploying — no manual step. The manual CLI remains available for ops (e.g.
+migrating a database without a deploy):
 
 ```bash
 DATABASE_URL=libsql://… DATABASE_AUTH_TOKEN=… pnpm migrate
@@ -103,6 +135,10 @@ or skipped pruning never serves stale values as fresh.
   enrichment), unset `OPENROUTER_API_KEY` (creativity fails closed; search
   unaffected), or rotate GitHub credentials to block new logins.
 - **Database**: migrations are additive; older deploys ignore new tables.
-  Never destructively migrate during incident response — add and backfill.
+  Never destructively migrate during incident response — add and backfill
+  (expand/contract, see "Schema migrations on deploy"). To stop applying
+  migrations on deploy, revert `netlify.toml`'s build command to
+  `pnpm build`; because migrations are additive, no schema rollback is ever
+  required.
 - **Sessions**: to force global logout, rotate the session cookie name
   (`SESSION_COOKIE_NAME`) — old cookies stop matching instantly.
