@@ -4,7 +4,9 @@ A small web service to find available package names on package repositories.
 
 Type a seed word: the app collects synonyms and related words (Wordnik),
 optionally invents creative alternatives (OpenRouter, authenticated users),
-and checks every candidate against npm's registry with honest
+and checks every candidate across the package registries you select — npm,
+PyPI, RubyGems, Hex, Maven Central (via this site's API), and crates.io,
+NuGet, Packagist (fetched directly from your browser) — with honest
 `available | taken | invalid | unknown` classification. `unknown` is never
 presented as available.
 
@@ -51,15 +53,8 @@ node scripts/verify-production-build.mjs   # static build shape check
 
 - npm **scope** claimability is intentionally unsupported: npm provides no
   dependable signal, and the app refuses scoped targets explicitly.
-- Availability is observed, not guaranteed — npm remains the authority.
-
-## Potential other Repositories
-
-- PyPi (pythong)
-- Maven (java)
-- Crates.io (rust)
-- NuGet (dotnet)
-- RubyGems (ruby)
-- Packagist (php)
-- Hex (elixir)
-- https://pkg.go.dev/ (go)
+- Availability is observed, not guaranteed — each registry remains the
+  authority.
+- Supported registries: npm, PyPI, RubyGems, Hex, Maven Central (server
+  venue), and crates.io, NuGet, Packagist (browser venue). Go (pkg.go.dev) is
+  unsupported: no official JSON search API.

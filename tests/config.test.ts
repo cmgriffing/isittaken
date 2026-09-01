@@ -7,9 +7,22 @@ describe("loadServerConfig", () => {
   it("applies safe defaults for local development", () => {
     const config = loadServerConfig(baseEnv);
     expect(config.database.url).toBe("file:./local.db");
-    expect(config.npm.registryOrigin).toBe("https://registry.npmjs.org");
+    expect(config.registries.npm.origin).toBe("https://registry.npmjs.org");
     expect(config.session.cookieSecure).toBe(false);
-    expect(config.cache.ttl.npmAvailableMs).toBeLessThan(config.cache.ttl.npmTakenMs);
+    expect(config.cache.ttl.registryAvailableMs).toBeLessThan(config.cache.ttl.registryTakenMs);
+  });
+
+  it("resolves per-registry settings from descriptor defaults and env overrides", () => {
+    const config = loadServerConfig({
+      REGISTRY_PYPI_RATE_LIMIT_PER_MINUTE: "45",
+      REGISTRY_MAVEN_TIMEOUT_MS: "2500",
+    });
+    expect(config.registries.pypi.rateLimitPerMinute).toBe(45);
+    expect(config.registries.pypi.timeoutMs).toBe(4000);
+    expect(config.registries.maven.timeoutMs).toBe(2500);
+    expect(config.registries.maven.rateLimitPerMinute).toBe(30);
+    // Browser-venue registries have no server settings at all.
+    expect("crates" in config.registries).toBe(false);
   });
 
   it("treats empty-string environment values as unset", () => {

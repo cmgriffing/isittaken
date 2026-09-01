@@ -5,15 +5,20 @@ import { createClient, type Client } from "@libsql/client";
 import { ensureMigrated } from "../../src/db/migrate";
 import { createCacheRepository } from "../../src/db/repositories/cache-repository";
 import { createWordnikSource } from "../../src/adapters/wordnik/source";
-import { createNpmRegistry } from "../../src/adapters/npm/registry";
 import { createOpenRouterProvider } from "../../src/adapters/openrouter/provider";
+import { createServerRegistryAdapter } from "../../src/adapters/registries/server-adapter";
 import { LibsqlSessionRepository } from "../../src/db/repositories/session-repository";
 import { LibsqlUserRepository } from "../../src/db/repositories/user-repository";
 import { LibsqlQuotaRepository } from "../../src/db/repositories/quota-repository";
 import { createRateLimiter, type RateLimiter } from "../../src/lib/rate-limit";
-import { cachePolicyFor } from "../../src/domain/cache-policy";
+import { cachePolicyFor, retentionFor } from "../../src/domain/cache-policy";
+import { REGISTRY_LINEUP } from "../../src/domain/registries";
 import type { AppContext } from "../../src/functions/composition";
-import type { ServerConfig } from "../../src/config/server";
+import type {
+  RegistryRuntimeSettings,
+  ServerConfig,
+  ServerRegistryId,
+} from "../../src/config/server";
 import { loadServerConfig } from "../../src/config/server";
 import type { IdGenerator } from "../../src/domain/ports";
 
@@ -21,6 +26,8 @@ export interface TestContextOptions {
   /** Fake upstream fetch shared by all adapters. */
   fetchImpl?: typeof fetch;
   config?: Partial<ServerConfig>;
+  /** Per-registry settings overrides, merged over descriptor defaults. */
+  registrySettings?: Partial<Record<ServerRegistryId, Partial<RegistryRuntimeSettings>>>;
   github?: { clientId: string; clientSecret: string };
   session?: Partial<ServerConfig["session"]>;
   publicSiteUrl?: string;
@@ -44,6 +51,18 @@ export async function createTestContext(
   const config: ServerConfig = {
     ...base,
     ...options.config,
+    registries: {
+      ...base.registries,
+      ...Object.fromEntries(
+        Object.entries(options.registrySettings ?? {}).map(([id, override]) => [
+          id,
+          {
+            ...base.registries[id as ServerRegistryId],
+            ...override,
+          } as RegistryRuntimeSettings,
+        ]),
+      ),
+    } as ServerConfig["registries"],
     github: { ...base.github, ...options.github },
     session: { ...base.session, ...options.session },
     app: { ...base.app, publicSiteUrl: options.publicSiteUrl ?? base.app.publicSiteUrl },
@@ -70,17 +89,39 @@ export async function createTestContext(
     cachePolicy: cachePolicyFor("wordnik", config),
     fetchImpl: options.fetchImpl,
   });
-  const npmRegistry = createNpmRegistry({
-    origin: config.npm.registryOrigin,
-    timeoutMs: config.npm.timeoutMs,
-    clock,
-    cache,
-    cachePolicies: {
-      "npm-available": cachePolicyFor("npm-available", config),
-      "npm-taken": cachePolicyFor("npm-taken", config),
-    },
-    fetchImpl: options.fetchImpl,
-  });
+
+  // Server-venue adapters mirror the composition root's construction.
+  const serverRegistries = new Map<string, ReturnType<typeof createServerRegistryAdapter>>();
+  const registryRateLimiters = new Map<string, RateLimiter>();
+  for (const descriptor of REGISTRY_LINEUP) {
+    if (descriptor.venue !== "server") continue;
+    const settings = config.registries[descriptor.id as ServerRegistryId];
+    serverRegistries.set(
+      descriptor.id,
+      createServerRegistryAdapter({
+        descriptor,
+        origin: settings.origin,
+        timeoutMs: settings.timeoutMs,
+        clock,
+        cache,
+        cachePolicies: {
+          available: {
+            freshForMs: settings.availableTtlMs,
+            retainForMs: retentionFor("registry-available", settings.availableTtlMs),
+          },
+          taken: {
+            freshForMs: settings.takenTtlMs,
+            retainForMs: retentionFor("registry-taken", settings.takenTtlMs),
+          },
+        },
+        fetchImpl: options.fetchImpl,
+      }),
+    );
+    registryRateLimiters.set(
+      descriptor.id,
+      createRateLimiter({ limit: settings.rateLimitPerMinute, windowMs: 60_000 }),
+    );
+  }
 
   const openRouterProvider = createOpenRouterProvider({
     apiKey: config.openrouter.apiKey ?? "test-openrouter-key",
@@ -102,7 +143,9 @@ export async function createTestContext(
     users: new LibsqlUserRepository(db, ids),
     quotas: new LibsqlQuotaRepository(db),
     wordnikSource,
-    npmRegistry,
+    serverRegistries,
+    registryDescriptors: REGISTRY_LINEUP,
+    registryRateLimiters,
     openRouterProvider,
     searchRateLimiter: createRateLimiter({
       limit: options.rateLimits?.searchPerMinute ?? config.rateLimit.publicSearchPerMinute,

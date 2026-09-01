@@ -40,15 +40,10 @@ function wordnikOk() {
 }
 
 describe("POST /api/search", () => {
-  it("returns 200 with seed, wordnik enrichment, and npm results", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(wordnikOk())
-      .mockResolvedValueOnce(new Response(JSON.stringify({ name: "optics" }), { status: 200 }))
-      .mockResolvedValueOnce(new Response("Not Found", { status: 404 }))
-      .mockResolvedValue(new Response("Not Found", { status: 404 }));
-
+  it("returns candidates with provenance only — no registry checks", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(wordnikOk());
     const handler = await makeHandler({ fetchImpl });
+
     const response = await post(handler, { seed: "laser" });
     expect(response.status).toBe(200);
 
@@ -60,22 +55,19 @@ describe("POST /api/search", () => {
     expect(names).toContain("optics");
     expect(names).toContain("photon");
 
-    const optics = body.candidates.find((c) => c.name === "optics");
-    expect(optics?.registryResults[0]).toMatchObject({ registry: "npm", status: "available" });
-    const laser = body.candidates.find((c) => c.name === "laser");
-    expect(laser?.registryResults[0]).toMatchObject({ registry: "npm", status: "taken" });
-    const photon = body.candidates.find((c) => c.name === "photon");
-    expect(photon?.registryResults[0]).toMatchObject({ status: "available" });
-    expect(typeof photon?.registryResults[0]?.checkedAtMs).toBe("number");
+    // Registry work is out of scope for discovery: no upstream registry was
+    // contacted and no candidate carries registry results.
+    for (const candidate of body.candidates) {
+      expect(candidate.registryResults).toEqual([]);
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // wordnik only
+    expect(String(fetchImpl.mock.calls[0]?.[0])).toContain("wordnik");
   });
 
-  it("still returns seed and injected npm results when Wordnik fails", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("slow down", { status: 429 })) // wordnik
-      .mockResolvedValue(new Response("Not Found", { status: 404 })); // npm
-
+  it("returns injected candidates with provenance when Wordnik fails", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("slow down", { status: 429 }));
     const handler = await makeHandler({ fetchImpl });
+
     const response = await post(handler, {
       seed: "laser",
       injectedSynonyms: ["optics"],
@@ -84,34 +76,27 @@ describe("POST /api/search", () => {
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as SearchResponse;
-    expect(body.sources).toHaveLength(1);
-    expect(body.sources[0]).toMatchObject({ source: "wordnik", status: "unavailable" });
-    const names = body.candidates.map((c) => c.name);
-    for (const expected of ["laser", "optics", "lazerly"]) {
-      expect(names).toContain(expected);
-      const candidate = body.candidates.find((c) => c.name === expected);
-      expect(candidate?.registryResults[0]?.status).toBe("available");
-    }
+    expect(body.sources).toEqual([
+      { source: "wordnik", status: "unavailable", reason: expect.any(String) },
+    ]);
+    const byName = new Map(body.candidates.map((c) => [c.name, c]));
+    expect(byName.get("laser")?.provenance).toContain("input");
+    expect(byName.get("optics")?.provenance).toContain("injected-synonym");
+    expect(byName.get("lazerly")?.provenance).toContain("injected-creative");
   });
 
-  it("never reports availability for ambiguous npm failures", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("[]", { status: 200 })) // wordnik: empty ok
-      .mockResolvedValueOnce(new Response("slow down", { status: 429 })) // npm for laser
-      .mockResolvedValueOnce(new Response("boom", { status: 500 })) // npm for optics
-      .mockRejectedValueOnce(new DOMException("timed out", "TimeoutError")); // npm for photon
-
+  it("merges duplicate candidates and unions provenance", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("[]", { status: 200 }));
     const handler = await makeHandler({ fetchImpl });
-    const response = await post(handler, { seed: "laser", injectedSynonyms: ["optics", "photon"] });
-    expect(response.status).toBe(200);
 
+    const response = await post(handler, {
+      seed: "laser",
+      injectedSynonyms: ["Laser", " laser "],
+    });
     const body = (await response.json()) as SearchResponse;
-    const statuses = body.candidates.flatMap((c) => c.registryResults.map((r) => r.status));
-    expect(statuses).toHaveLength(3);
-    for (const status of statuses) {
-      expect(status).toBe("unknown");
-    }
+    expect(body.candidates).toHaveLength(1);
+    expect(body.candidates[0]?.name).toBe("laser");
+    expect(body.candidates[0]?.provenance).toEqual(["input", "injected-synonym"]);
   });
 
   it("rejects invalid requests with 400 before any upstream call", async () => {
@@ -161,7 +146,7 @@ describe("POST /api/search", () => {
   });
 
   it("throttles per-client-IP with 429 and Retry-After", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("[]", { status: 200 }));
     const handler = await makeHandler({ fetchImpl, rateLimits: { searchPerMinute: 2 } });
 
     expect((await post(handler, { seed: "one" }, "9.9.9.9")).status).toBe(200);

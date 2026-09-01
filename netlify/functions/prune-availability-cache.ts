@@ -6,7 +6,8 @@ import { pruneCacheFamily, type PruningOptions } from "../../src/db/pruning";
 import { logger } from "../../src/lib/logger";
 
 /**
- * Availability shard: npm-available + npm-taken cache families.
+ * Availability shard: registry-available + registry-taken cache families
+ * (all server-venue registries share these two generic families).
  * Runs hourly, matching the shortest TTLs. Netlify scheduled functions are
  * limited to 30s; the work deadline keeps margin so we always return in time.
  */
@@ -24,8 +25,8 @@ export async function runOnce(nowMs: number): Promise<void> {
   };
 
   const summaries = await Promise.allSettled([
-    pruneCacheFamily("npm-available", db, options),
-    pruneCacheFamily("npm-taken", db, options),
+    pruneCacheFamily("registry-available", db, options),
+    pruneCacheFamily("registry-taken", db, options),
   ]);
   for (const outcome of summaries) {
     if (outcome.status === "rejected") {

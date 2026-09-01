@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { fetchSession, logout, type SessionState } from "../lib/client/api";
+import GitHubSignIn from "./GitHubSignIn";
 
 /**
  * Authentication status island. Personalized state arrives through a
@@ -23,9 +24,7 @@ export default function AuthIsland() {
   if (!session.authenticated) {
     return (
       <p class="auth-status">
-        <a href="/api/auth/github/start" class="button">
-          Sign in with GitHub
-        </a>
+        <GitHubSignIn />
         <span class="hint"> only for optional AI ideas.</span>
       </p>
     );

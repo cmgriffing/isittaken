@@ -1,12 +1,34 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { registryById } from "../domain/registries";
 
 /**
  * Server-only configuration. This module is loaded exclusively by server-side
  * code (Netlify Functions, adapters, repositories). It must never be imported
  * by client islands; ESLint enforces that boundary for `src/islands/**`.
  */
+
+/** Registry ids that run their availability checks server-side. */
+const SERVER_REGISTRY_IDS = ["npm", "pypi", "rubygems", "hex", "maven"] as const;
+
+export type ServerRegistryId = (typeof SERVER_REGISTRY_IDS)[number];
+
+/** Default upstream timeout shared by server-venue registry checks. */
+const DEFAULT_REGISTRY_TIMEOUT_MS = 4_000;
+
+/** Fallback per-IP rate limit when a descriptor declares none. */
+const DEFAULT_REGISTRY_RATE_LIMIT_PER_MINUTE = 30;
+
+/** Resolved, per-registry runtime settings (descriptor defaults + env). */
+export interface RegistryRuntimeSettings {
+  /** Upstream origin for the check endpoint (tests/ops may override). */
+  origin: string;
+  timeoutMs: number;
+  rateLimitPerMinute: number;
+  availableTtlMs: number;
+  takenTtlMs: number;
+}
 
 const emptyStringToUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
@@ -27,7 +49,32 @@ const urlWithDefault = (fallback: string) =>
 
 const flag = z.preprocess(emptyStringToUndefined, z.coerce.boolean().optional());
 
+/**
+ * Per-registry environment overrides, e.g. `REGISTRY_NPM_TIMEOUT_MS`,
+ * `REGISTRY_PYPI_RATE_LIMIT_PER_MINUTE`, `REGISTRY_HEX_AVAILABLE_TTL_MS`.
+ * Defaults come from the registry descriptors; the shared timeout default
+ * applies when a registry has no override.
+ */
+const registryEnvShape: Record<string, z.ZodTypeAny> = Object.fromEntries(
+  SERVER_REGISTRY_IDS.flatMap((id) => {
+    const descriptor = registryById(id);
+    if (!descriptor) throw new Error(`No registry descriptor for id ${id}.`);
+    const prefix = `REGISTRY_${id.toUpperCase()}_`;
+    return [
+      [`${prefix}ORIGIN`, urlWithDefault(descriptor.checkOrigin)],
+      [`${prefix}TIMEOUT_MS`, int(DEFAULT_REGISTRY_TIMEOUT_MS)],
+      [
+        `${prefix}RATE_LIMIT_PER_MINUTE`,
+        int(descriptor.rateLimitPerMinute ?? DEFAULT_REGISTRY_RATE_LIMIT_PER_MINUTE),
+      ],
+      [`${prefix}AVAILABLE_TTL_MS`, int(descriptor.cacheTtl.availableMs)],
+      [`${prefix}TAKEN_TTL_MS`, int(descriptor.cacheTtl.takenMs)],
+    ] as const;
+  }),
+);
+
 const envSchema = z.object({
+  ...registryEnvShape,
   NODE_ENV: z.string().optional(),
 
   DATABASE_URL: stringWithDefault("file:./local.db"),
@@ -36,10 +83,6 @@ const envSchema = z.object({
   WORDNIK_API_KEY: optionalString,
   WORDNIK_BASE_URL: urlWithDefault("https://api.wordnik.com/v4"),
   WORDNIK_TIMEOUT_MS: int(4_000),
-
-  NPM_REGISTRY_ORIGIN: stringWithDefault("https://registry.npmjs.org"),
-  NPM_TIMEOUT_MS: int(4_000),
-  NPM_CONCURRENCY: int(8),
 
   GITHUB_CLIENT_ID: optionalString,
   GITHUB_CLIENT_SECRET: optionalString,
@@ -61,8 +104,8 @@ const envSchema = z.object({
 
   CACHE_TTL_WORDNIK_MS: int(604_800_000),
   CACHE_TTL_OPENROUTER_MS: int(259_200_000),
-  CACHE_TTL_NPM_AVAILABLE_MS: int(300_000),
-  CACHE_TTL_NPM_TAKEN_MS: int(86_400_000),
+  CACHE_TTL_REGISTRY_AVAILABLE_MS: int(300_000),
+  CACHE_TTL_REGISTRY_TAKEN_MS: int(86_400_000),
 
   QUOTA_USER_BURST_PER_MINUTE: int(5),
   QUOTA_USER_PERIODIC_PER_DAY: int(25),
@@ -101,11 +144,7 @@ export type ServerConfig = {
     baseUrl: string;
     timeoutMs: number;
   };
-  npm: {
-    registryOrigin: string;
-    timeoutMs: number;
-    concurrency: number;
-  };
+  registries: Record<ServerRegistryId, RegistryRuntimeSettings>;
   github: {
     clientId?: string;
     clientSecret?: string;
@@ -124,8 +163,8 @@ export type ServerConfig = {
     ttl: {
       wordnikMs: number;
       openrouterMs: number;
-      npmAvailableMs: number;
-      npmTakenMs: number;
+      registryAvailableMs: number;
+      registryTakenMs: number;
     };
   };
   quota: {
@@ -183,6 +222,23 @@ export function loadServerConfig(
     );
   }
 
+  const registries = Object.fromEntries(
+    SERVER_REGISTRY_IDS.map((id) => {
+      const descriptor = registryById(id);
+      if (!descriptor) throw new Error(`No registry descriptor for id ${id}.`);
+      const prefix = `REGISTRY_${id.toUpperCase()}_`;
+      const env = parsed as unknown as Record<string, string | number | undefined>;
+      const settings: RegistryRuntimeSettings = {
+        origin: env[`${prefix}ORIGIN`] as string,
+        timeoutMs: env[`${prefix}TIMEOUT_MS`] as number,
+        rateLimitPerMinute: env[`${prefix}RATE_LIMIT_PER_MINUTE`] as number,
+        availableTtlMs: env[`${prefix}AVAILABLE_TTL_MS`] as number,
+        takenTtlMs: env[`${prefix}TAKEN_TTL_MS`] as number,
+      };
+      return [id, settings];
+    }),
+  ) as Record<ServerRegistryId, RegistryRuntimeSettings>;
+
   return {
     app: {
       publicSiteUrl: parsed.PUBLIC_SITE_URL,
@@ -197,11 +253,7 @@ export function loadServerConfig(
       baseUrl: parsed.WORDNIK_BASE_URL,
       timeoutMs: parsed.WORDNIK_TIMEOUT_MS,
     },
-    npm: {
-      registryOrigin: parsed.NPM_REGISTRY_ORIGIN,
-      timeoutMs: parsed.NPM_TIMEOUT_MS,
-      concurrency: parsed.NPM_CONCURRENCY,
-    },
+    registries,
     github: {
       clientId: parsed.GITHUB_CLIENT_ID,
       clientSecret: parsed.GITHUB_CLIENT_SECRET,
@@ -220,8 +272,8 @@ export function loadServerConfig(
       ttl: {
         wordnikMs: parsed.CACHE_TTL_WORDNIK_MS,
         openrouterMs: parsed.CACHE_TTL_OPENROUTER_MS,
-        npmAvailableMs: parsed.CACHE_TTL_NPM_AVAILABLE_MS,
-        npmTakenMs: parsed.CACHE_TTL_NPM_TAKEN_MS,
+        registryAvailableMs: parsed.CACHE_TTL_REGISTRY_AVAILABLE_MS,
+        registryTakenMs: parsed.CACHE_TTL_REGISTRY_TAKEN_MS,
       },
     },
     quota: {

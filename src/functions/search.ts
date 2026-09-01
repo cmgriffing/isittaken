@@ -10,10 +10,10 @@ import { logger } from "../lib/logger";
 const MAX_BODY_BYTES = 16_384;
 
 /**
- * Public ordinary-search endpoint. Schema validation, request-size and
- * candidate caps, per-IP throttling, bounded upstream concurrency, and
- * stable error responses. Transport-neutral behavior lives in
- * `runDiscovery`; this handler is a thin HTTP shell.
+ * Public candidate-discovery endpoint. Returns the seed, per-source
+ * outcomes, and composed candidates with provenance — no registry work.
+ * Availability checks happen per-registry via `POST /api/check` (server
+ * venue) or direct browser fetches (browser venue).
  */
 export function createSearchFunction(ctx: AppContext): (request: Request) => Promise<Response> {
   const bodySchema = z.object({
@@ -66,10 +66,8 @@ export function createSearchFunction(ctx: AppContext): (request: Request) => Pro
 
     const deps: DiscoveryDeps = {
       sources: [ctx.wordnikSource],
-      registries: [ctx.npmRegistry],
       clock: ctx.clock,
       limits,
-      registryConcurrency: ctx.config.npm.concurrency,
     };
 
     try {

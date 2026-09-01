@@ -4,6 +4,7 @@ import {
   normalizeNpmName,
   type NpmRegistryOptions,
 } from "../../../src/adapters/npm/registry";
+import { registryCacheKey } from "../../../src/adapters/registries/server-adapter";
 
 const clock = { nowMs: () => 1_000 };
 
@@ -95,19 +96,13 @@ describe("createNpmRegistry lookup classification", () => {
     expect(result2.status).toBe("unknown");
   });
 
-  it("serves fresh cache hits and preserves the original check time", async () => {
+  it("serves fresh cache hits from a single read and preserves the original check time", async () => {
     const cachedValue = JSON.stringify({
       version: 1,
       data: { status: "available", checkedAtMs: 555 },
     });
     const cache = {
-      read: vi
-        .fn()
-        .mockImplementation(async (family: string) =>
-          family === "npm-available"
-            ? { status: "fresh", valueJson: cachedValue }
-            : { status: "miss" },
-        ),
+      read: vi.fn().mockResolvedValue({ status: "fresh", valueJson: cachedValue }),
       write: vi.fn(),
     };
     const fetchImpl = vi.fn();
@@ -115,14 +110,32 @@ describe("createNpmRegistry lookup classification", () => {
     const result = await registry.lookup("laser");
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(result).toEqual({ status: "available", checkedAtMs: 555 });
+    // Decision D5: a single family read; the verdict comes from the value.
+    expect(cache.read).toHaveBeenCalledTimes(1);
+    expect(cache.read).toHaveBeenCalledWith("registry-available", registryCacheKey("npm", "laser"));
   });
 
-  it("writes results to the family matching the outcome", async () => {
+  it("ignores cache values with an unexpected verdict payload", async () => {
+    const cache = {
+      read: vi.fn().mockResolvedValue({
+        status: "fresh",
+        valueJson: JSON.stringify({ version: 1, data: { status: "nonsense", checkedAtMs: 5 } }),
+      }),
+      write: vi.fn(),
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("Not Found", { status: 404 }));
+    const registry = createNpmRegistry(baseOptions({ fetchImpl, cache: cache as never }));
+    const result = await registry.lookup("laser");
+    expect(result.status).toBe("available");
+    expect(fetchImpl).toHaveBeenCalled();
+  });
+
+  it("mirrors verdicts into both generic families with per-verdict policy", async () => {
     const write = vi.fn().mockResolvedValue(undefined);
     const cache = { read: vi.fn().mockResolvedValue({ status: "miss" }), write };
     const policies = {
-      "npm-available": { freshForMs: 300_000, retainForMs: 3_600_000 },
-      "npm-taken": { freshForMs: 86_400_000, retainForMs: 604_800_000 },
+      available: { freshForMs: 300_000, retainForMs: 3_600_000 },
+      taken: { freshForMs: 86_400_000, retainForMs: 604_800_000 },
     };
     const fetchTaken = vi
       .fn()
@@ -130,22 +143,23 @@ describe("createNpmRegistry lookup classification", () => {
     await createNpmRegistry(
       baseOptions({ fetchImpl: fetchTaken, cache: cache as never, cachePolicies: policies }),
     ).lookup("laser");
-    expect(write).toHaveBeenCalledTimes(1);
-    const [family, , , usedPolicy] = write.mock.calls[0] as unknown as [
-      string,
-      string,
-      string,
-      unknown,
-    ];
-    expect(family).toBe("npm-taken");
-    expect(usedPolicy).toEqual(policies["npm-taken"]);
+    expect(write).toHaveBeenCalledTimes(2);
+    const families = write.mock.calls.map((call) => (call as unknown as [string])[0]);
+    expect(families).toEqual(["registry-available", "registry-taken"]);
+    for (const call of write.mock.calls) {
+      const [, key, , usedPolicy] = call as unknown as [string, string, string, unknown];
+      expect(key).toBe(registryCacheKey("npm", "laser"));
+      expect(usedPolicy).toEqual(policies.taken);
+    }
 
     const fetchAvailable = vi.fn().mockResolvedValue(new Response("Not Found", { status: 404 }));
     await createNpmRegistry(
       baseOptions({ fetchImpl: fetchAvailable, cache: cache as never, cachePolicies: policies }),
     ).lookup("free-one");
-    const [family2] = write.mock.calls[1] as unknown as [string];
-    expect(family2).toBe("npm-available");
+    for (const call of write.mock.calls.slice(2)) {
+      const [, , , usedPolicy] = call as unknown as [string, string, string, unknown];
+      expect(usedPolicy).toEqual(policies.available);
+    }
   });
 
   it("does not cache unknown outcomes", async () => {

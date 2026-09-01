@@ -5,14 +5,13 @@ import SearchIsland from "../islands/SearchIsland.tsx";
 
 <BaseLayout
   pageTitle="Is It Taken? Package name availability, checked."
-  description="Search a seed word for synonyms, get creative AI alternatives, and check whether the names are available on npm."
+  description="Search a seed word for synonyms, get creative AI alternatives, and check whether the names are available across npm, PyPI, RubyGems, Hex, Maven Central, crates.io, NuGet, and Packagist."
 >
   <section class="hero">
     <h1>Is that package name taken?</h1>
     <p>
-      Type a word. We collect synonyms and related words, invent a few creative alternatives if you
-      ask, and check each candidate against npm. An honest <strong>unknown</strong> is given when npm
-      can't answer.
+      Type a word. We'll gather synonyms, invent a few alternatives, and check what's free across 8
+      registries.
     </p>
   </section>
 
@@ -22,17 +21,12 @@ import SearchIsland from "../islands/SearchIsland.tsx";
     <h2 id="how-heading">How it works</h2>
     <ol>
       <li>Your seed word becomes the first candidate.</li>
+      <li>Wordnik adds synonyms and related words.</li>
       <li>
-        Wordnik contributes synonyms and related words; a failed lookup is reported, never hidden.
+        Normalized candidates are checked against your selected registries; results fill in
+        progressively.
       </li>
-      <li>
-        Candidates are normalized and deduplicated, then checked against npm's registry with bounded
-        concurrency.
-      </li>
-      <li>
-        Optional: sign in with GitHub for AI-generated name ideas with per-user quotas. Anonymous
-        search works fine without it.
-      </li>
+      <li>Optional: sign in with GitHub for AI-generated ideas.</li>
     </ol>
     <p>
       See <a href="/docs/methodology">methodology</a> for how results are classified, and why scoped npm

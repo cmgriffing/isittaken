@@ -80,12 +80,10 @@ export function createCreativeSearchFunction(
         { seed: validated.seed, regenerate },
         {
           provider: ctx.openRouterProvider,
-          registries: [ctx.npmRegistry],
           quotas: ctx.quotas,
           clock: ctx.clock,
           userId,
           limits: ctx.config.limits,
-          registryConcurrency: ctx.config.npm.concurrency,
           quota: ctx.config.quota,
           creative: {
             model: ctx.config.openrouter.model,

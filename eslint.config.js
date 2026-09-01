@@ -50,4 +50,24 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // Registry descriptors are the client-safe spine shared by server
+    // adapters, islands, and future MCP tooling. They must stay free of
+    // server-only modules (configuration, secrets, database, adapters).
+    files: ["src/domain/registries/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/config/**", "**/db/**", "**/adapters/**", "**/functions/**"],
+              message:
+                "Registry descriptors are client-safe and must not import server-only modules.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );
