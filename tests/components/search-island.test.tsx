@@ -42,9 +42,14 @@ function typeSeedAndSubmit(value: string) {
  * check endpoint reports `available` for npm and `taken` for PyPI; browser
  * venue endpoints answer crates.io (taken) and NuGet (404).
  */
-function stubMultiRegistryFetch(options: { search?: SearchResponse } = {}) {
+function stubMultiRegistryFetch(options: { search?: SearchResponse; session?: object } = {}) {
   return vi.fn().mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/api/auth/session")) {
+      return new Response(JSON.stringify(options.session ?? { authenticated: false }), {
+        status: 200,
+      });
+    }
     if (url.includes("/api/search")) {
       return new Response(JSON.stringify(options.search ?? searchResponse()), { status: 200 });
     }
@@ -297,15 +302,19 @@ describe("SearchIsland", () => {
     typeSeedAndSubmit(seed);
     await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate creative names" }));
-    const signIn = await screen.findByText("Creative generation needs an account.");
-    expect(signIn).toBeTruthy();
+    // Anonymous users see the explanation and sign-in instead of the button.
+    expect(screen.queryByRole("button", { name: "Generate creative names" })).toBeNull();
+    expect(await screen.findByText(/need a GitHub account/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Sign in with GitHub" })).toBeTruthy();
     expect(screen.getByText("Names for “laser”")).toBeTruthy();
   });
 
   it("reports quota exhaustion with the server message", async () => {
     const fetchImpl = vi.fn().mockImplementation(async (input: string | URL | Request) => {
       const url = String(input);
+      if (url.includes("/api/auth/session")) {
+        return new Response(JSON.stringify({ authenticated: true }), { status: 200 });
+      }
       if (url.includes("/api/search")) {
         return new Response(JSON.stringify(searchResponse()), { status: 200 });
       }
@@ -331,7 +340,7 @@ describe("SearchIsland", () => {
     render(h(SearchIsland, null));
     typeSeedAndSubmit(seed);
     await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Generate creative names" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate creative names" }));
     expect(await screen.findByText("Daily generation quota exhausted.")).toBeTruthy();
     expect(screen.getByText("Names for “laser”")).toBeTruthy();
   });

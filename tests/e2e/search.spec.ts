@@ -134,6 +134,7 @@ test.describe("search island (hydrated)", () => {
 
   test("progressive rendering: creative failure preserves ordinary results", async ({ page }) => {
     await mockApis(page, {
+      session: { authenticated: true },
       creative: {
         status: 502,
         body: {
@@ -172,15 +173,16 @@ test.describe("search island (hydrated)", () => {
     await page.getByRole("button", { name: "Search" }).click();
     await expect(page.getByText("Names for “laser”")).toBeVisible();
 
-    await page.getByRole("button", { name: "Generate creative names" }).click();
-    const signIn = page.getByRole("link", { name: "Sign in with GitHub" }).last();
-    await expect(signIn).toBeVisible();
+    // Anonymous users see the explanation and sign-in instead of the button.
+    await expect(page.getByText(/need a GitHub account/i)).toBeVisible();
+    await expect(page.getByRole("link", { name: "Sign in with GitHub" }).last()).toBeVisible();
     // Ordinary results are untouched by the auth prompt.
     await expect(page.getByText("Names for “laser”")).toBeVisible();
   });
 
   test("quota messages surface when the ceiling is reached", async ({ page }) => {
     await mockApis(page, {
+      session: { authenticated: true },
       creative: {
         status: 429,
         body: { error: { code: "quota_exhausted", message: "Daily generation quota exhausted." } },

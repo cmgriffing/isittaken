@@ -8,13 +8,16 @@ import {
   type VerdictCell,
 } from "../lib/client/availability";
 import {
+  fetchSession,
   mergeCandidates,
   searchCreative,
   searchOrdinary,
   type CreativeClientResult,
   type CreativeOk,
+  type SessionState,
 } from "../lib/client/api";
 import { PROVENANCE_LABELS, REGISTRY_STATUS_LABELS } from "../lib/client/labels";
+import GitHubSignIn from "./GitHubSignIn";
 
 type OrdinaryPhase = "idle" | "loading" | "error" | "done";
 
@@ -72,6 +75,7 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
 
   const [selectedIds, setSelectedIds] = useState<RegistryId[]>(loadSelection);
   const [cells, setCells] = useState<Map<string, VerdictCell>>(new Map());
+  const [session, setSession] = useState<SessionState | null>(null);
 
   const merged = useMemo<ComposedCandidate[]>(
     () =>
@@ -107,6 +111,12 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
     if (!service || merged.length === 0 || selectedDescriptors.length === 0) return;
     void service.checkCandidates(merged.map((candidate) => ({ name: candidate.name })));
   }, [service, merged]);
+
+  // Session is only needed once results (and the creative section) exist.
+  useEffect(() => {
+    if (phase !== "done" || session !== null) return;
+    void fetchSession().then(setSession);
+  }, [phase, session]);
 
   function toggleRegistry(id: RegistryId, enabled: boolean) {
     setSelectedIds((previous) => {
@@ -178,11 +188,6 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
             {phase === "loading" ? "Searching…" : "Search"}
           </button>
         </div>
-        <p class="hint" id="seed-hint">
-          We look up synonyms and related words, then check availability across your selected
-          package registries.
-        </p>
-
         <fieldset class="registry-toggles">
           <legend>Registries to check</legend>
           {REGISTRY_LINEUP.map((descriptor) => (
@@ -193,16 +198,19 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
                 onChange={(e) =>
                   toggleRegistry(descriptor.id, (e.target as HTMLInputElement).checked)
                 }
-              />{" "}
+              />
+              <svg class="chip-check" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <rect class="chip-check-frame" x="1" y="1" width="14" height="14" />
+                <path class="chip-check-mark" d="M6.5 11.5 3 8l1.2-1.2 2.3 2.3 4.8-4.8L13 5.5z" />
+              </svg>
               {descriptor.label}
-              <span class="hint">
-                {descriptor.venue === "server"
-                  ? " · checked via API"
-                  : " · checked in your browser"}
-              </span>
             </label>
           ))}
         </fieldset>
+        <p class="hint">
+          crates.io, NuGet, and Packagist are checked in your browser — the rest via this site's
+          API.
+        </p>
       </form>
 
       <div aria-live="polite">
@@ -231,14 +239,24 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
 
       {phase === "done" && (
         <div class="creative">
-          <h3>Creative names (optional, AI-powered)</h3>
-          <CreativeControls
-            seedMissing={!seed.trim()}
-            loading={creativeLoading}
-            result={creative}
-            onGenerate={() => runCreative(false)}
-            onRegenerate={() => runCreative(true)}
-          />
+          <h3>Need more? Creative names</h3>
+          {session === null ? null : session.authenticated ? (
+            <CreativeControls
+              seedMissing={!seed.trim()}
+              loading={creativeLoading}
+              result={creative}
+              onGenerate={() => runCreative(false)}
+              onRegenerate={() => runCreative(true)}
+            />
+          ) : (
+            <div aria-live="polite">
+              <p role="status">
+                Creative names are AI-generated, so they need a GitHub account to keep per-person
+                quotas fair.
+              </p>
+              <GitHubSignIn />
+            </div>
+          )}
         </div>
       )}
     </section>
@@ -278,10 +296,7 @@ function CreativeControls(props: {
       )}
       {result?.status === "auth-required" && (
         <p role="status">
-          Creative generation needs an account.{" "}
-          <a href="/api/auth/github/start" class="button">
-            Sign in with GitHub
-          </a>
+          Creative generation needs an account. <GitHubSignIn />
         </p>
       )}
       {result?.status === "quota" && (
@@ -358,8 +373,8 @@ export function Results(props: {
         })}
       </ul>
       <p class="disclaimer">
-        “Available” means the registry did not know the name at the check time. It is not a
-        publishing guarantee — registries can reject names or they can be taken at any moment.
+        “Available” = not found at check time — not a publishing guarantee.{" "}
+        <a href="/docs/methodology">See methodology.</a>
       </p>
     </div>
   );
