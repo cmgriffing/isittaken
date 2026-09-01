@@ -46,8 +46,12 @@ node scripts/verify-production-build.mjs   # static build shape check
   GitHub OAuth registration, Turso, OpenRouter safeguards, rollback controls.
 - [Scheduled functions](docs/scheduled-functions.md) — pruning shards,
   schedules, and local one-shot invocation.
-- [Search contract](docs/webmcp-contract.md) — the transport-neutral request/
-  response models a future WebMCP adapter will consume.
+- [WebMCP tools](docs/webmcp-contract.md) — the browser tool adapter
+  (registered on the home page when the draft `document.modelContext` API is
+  present) with the four tools (`list_registries`, `search_names`,
+  `check_availability`, `batch_check_availability`), their single-flight/
+  abort/selection semantics, and the declared `isittaken:toolprogress`
+  extension, over the transport-neutral request/response models.
 
 ## Scope notes
 

@@ -1,23 +1,80 @@
-# Transport-Neutral Contracts (future WebMCP adapter)
+# Transport-Neutral Contracts (WebMCP adapter shipped)
 
 The application's core operations are callable without HTTP. Today the
-Netlify Functions translate JSON requests into the models below; a future
-WebMCP tool adapter can map tool arguments to the _same_ models and map the
-result back to tool content, without duplicating validation, provenance,
-deduplication, or availability rules.
+Netlify Functions translate JSON requests into the models below; the
+browser WebMCP adapter (`src/lib/client/webmcp/`) maps tool arguments to the
+_same_ models and maps tool results back from them, without duplicating
+validation, provenance, deduplication, or availability rules.
 
-There are two core operations, matching the split HTTP surface:
+There are two core operations, matching the split HTTP surface — plus the
+client-side fan-out that turns discovery into verdicts:
 
 1. **Candidate discovery** — seed (+ optional injected candidates) → names
    with provenance. No registry contact.
 2. **Single-registry availability check** — one name, one registry → one
-   verdict. This is the natural shape for a future "check name X on registry
-   Y" tool.
+   verdict.
+3. **Batch availability fan-out** — candidates × selected registries, run
+   by the client (server venues via `/api/check`, browser venues against
+   their CORS endpoints) and painted live in the results grid.
 
-WebMCP registration is deliberately **not** shipped in this release: the
-draft browser API is still evolving. The only requirement for a future
-adapter is that it lives in an isolated client module and translates between
-the draft API and the contracts below.
+## Shipped WebMCP tools
+
+The home page registers four tools via `document.modelContext.registerTool`
+when the draft browser API (W3C WebMCP CG report, 26 Aug 2026) is present.
+Browsers without it are unaffected; registration failures are logged and
+ignored. The adapter module is the only file touching the draft API
+(enforced by `tests/contract/webmcp-capabilities.test.ts`).
+
+| Tool                       | Input                                                            | Result                                                         | Annotations                            |
+| -------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------- | -------------------------------------- |
+| `list_registries`          | —                                                                | `{ registries: [{ id, label, language, venue, linkBase }] }`   | `readOnlyHint`                         |
+| `search_names`             | `seed`, `injectedSynonyms?`, `injectedCreatives?`                | `{ seed, generatedAtMs, candidates: [{ name, provenance }] }`  | `readOnlyHint`, `untrustedContentHint` |
+| `check_availability`       | `word`, `registry`                                               | `{ candidate, registry, status, name, checkedAtMs?, reason? }` | `readOnlyHint`                         |
+| `batch_check_availability` | `seed`, `injectedSynonyms?`, `injectedCreatives?`, `registries?` | `{ candidates, verdicts: [...], selectionUsed }`               | `readOnlyHint`, `untrustedContentHint` |
+
+Behavior shared with the HTTP surface:
+
+- Validation runs in domain code (`validateSearchRequest`) before any
+  network call; failures are fulfilled as structured results shaped
+  `{ error: { code, message } }` — never rejections. Codes match the API
+  (`invalid_seed`, `invalid_injected`, `over_limit`, `unsupported_scope`).
+- Injected candidates consume zero AI generation quota.
+- Checks share the same client verdict cache, bounded queue, and
+  429-retry-after handling as the on-page grid. Server-venue checks go
+  through `/api/check` and inherit its per-IP rate limits.
+
+## Batch semantics (single-flight, selection, abort, progress)
+
+- **Single-flight gate**: one `batch_check_availability` runs at a time per
+  page. A concurrent call fulfills immediately with
+  `{ error: { code: "batch_in_progress" }, progress: { done, total }, detail }`
+  pointing at aborting the pending call. The gate clears on completion,
+  abort, or a user selection change.
+- **Exact-replace selection**: a `registries` array replaces the visible
+  on-page selection with exactly those ids (unknown ids are reported in
+  `unknownRegistries`; an empty array is a structured error). Agent-driven
+  changes are in-memory only — they are never persisted to the user's
+  saved selection (`localStorage`), are marked on the toggles, and a
+  one-click "Restore saved selection" control appears while the live
+  selection differs from the saved one.
+- **Abort**: executing with the draft's `signal` lets the agent cancel;
+  abort stops scheduling new checks, restores the saved selection if the
+  batch replaced it, clears the gate, and fulfills with
+  `{ error: { code: "batch_aborted" } }`. A user toggling a registry
+  mid-batch aborts the batch the same way (the visible selection always
+  wins).
+- **Result timing**: the tool result resolves only when the whole fan-out
+  settles; the results grid paints verdicts live while it runs.
+
+## Progress event (declared extension)
+
+The draft has no progress event. This adapter re-dispatches a namespaced
+`CustomEvent("isittaken:toolprogress", { detail: { tool, done, total } })`
+on `document.modelContext` (an `EventTarget`) as batch verdicts land. This
+is a declared, best-effort extension: browser agents cannot observe page
+events — it exists for in-page and page-adjacent tooling. If the spec
+standardizes a `toolprogress` event, the adapter is the one file that
+changes.
 
 ## Discovery request model
 
@@ -56,8 +113,9 @@ const result = await runDiscovery(validated, {
 });
 ```
 
-The HTTP `/api/search` handler calls exactly this function. A WebMCP adapter
-would call it the same way; injected candidates follow the same limits,
+The HTTP `/api/search` handler calls exactly this function; the WebMCP
+`search_names` tool calls it through the same client pipeline with the same
+limits; injected candidates follow the same limits,
 provenance, and deduplication as HTTP requests.
 
 ## Discovery response model
@@ -90,8 +148,8 @@ const verdict = await registry.lookup(validation.name); // one upstream lookup
 
 `POST /api/check { word, registry }` is a thin shell over exactly this.
 Registry ids and their metadata (labels, links, venues) come from the shared
-descriptor lineup in `src/domain/registries` — the same client-safe module a
-"list supported registries" tool would expose.
+descriptor lineup in `src/domain/registries` — the same client-safe module
+the `list_registries` tool exposes.
 
 ```ts
 interface CheckResponse {

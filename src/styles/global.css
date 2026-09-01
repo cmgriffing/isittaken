@@ -537,6 +537,25 @@ form > label {
   margin-top: var(--space-6);
 }
 
+/* Agent-touched registry toggles: dashed underline marks agent-driven
+   membership changes; the restore control below reverts them. */
+.registry-toggles label.agent-touched {
+  border-style: dashed;
+}
+.restore-row {
+  margin-top: var(--space-3);
+}
+.restore-row button {
+  min-height: 44px;
+}
+
+/* Live fan-out progress under the results heading. */
+.batch-progress {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--color-muted);
+}
+
 .disclaimer {
   color: var(--color-muted);
   margin-top: var(--space-4);

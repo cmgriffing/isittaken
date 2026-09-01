@@ -4,8 +4,10 @@ import { join } from "node:path";
 import { createTestContext } from "../helpers/test-context";
 
 /**
- * Task 9.3: the initial application exposes no WebMCP draft API, no npm
- * scope endpoint, and no package-inside-scope behavior.
+ * Positive capability guarantees (flipped from the original prohibition in
+ * this same file): WebMCP tool registration ships via the adapter module,
+ * with an exact tool lineup, registered from the home page only. Scope
+ * behavior remains unsupported.
  */
 
 function walk(dir: string, files: string[] = []): string[] {
@@ -19,22 +21,63 @@ function walk(dir: string, files: string[] = []): string[] {
 
 const root = join(import.meta.dirname, "../..");
 
-describe("negative capability guarantees", () => {
-  it("registers no WebMCP browser API or draft adapter anywhere in app code", () => {
+/** The four declared tool names, exactly and only these. */
+const DECLARED_TOOLS = [
+  "list_registries",
+  "search_names",
+  "check_availability",
+  "batch_check_availability",
+] as const;
+
+describe("WebMCP capability guarantees", () => {
+  it("registers draft-API tools only from the dedicated adapter module", () => {
     const sourceFiles = [
       ...walk(join(root, "src")),
       ...walk(join(root, "netlify/functions")),
-    ].filter((file) => /\.(ts|tsx|astro|mjs)$/.test(file));
+    ].filter((file) => /\.(ts|tsx|astro|d\.ts)$/.test(file));
 
-    // Draft-API identifiers and tool-registration calls; prose comments
-    // mentioning the future adapter are fine.
-    const forbidden = [/modelContext/, /registerTool/i, /window\.agent\b/, /navigator\.ai\b/];
+    const adapterDir = join(root, "src/lib/client/webmcp");
     for (const file of sourceFiles) {
+      const inAdapter = file.startsWith(adapterDir);
       const content = readFileSync(file, "utf8");
-      for (const pattern of forbidden) {
+      for (const pattern of [/registerTool/, /document\.modelContext/]) {
+        expect(
+          inAdapter || !pattern.test(content),
+          `${file} uses draft-API identifier ${pattern} outside the adapter`,
+        ).toBe(true);
+      }
+      // window.agent / navigator.ai were never part of this app.
+      for (const pattern of [/window\.agent\b/, /navigator\.ai\b/]) {
         expect(content, `${file} matches ${pattern}`).not.toMatch(pattern);
       }
     }
+  });
+
+  it("registers exactly the four declared tool names in the adapter", async () => {
+    vi.resetModules();
+    const { createWebMcpAdapter } = await import("../../src/lib/client/webmcp/adapter");
+    const store = await import("../../src/lib/client/search-store");
+    store.resetSearchStoreForTests();
+    const registered: string[] = [];
+    const adapter = createWebMcpAdapter({
+      getModelContext: () => ({
+        registerTool: (tool: { name: string }) => {
+          registered.push(tool.name);
+        },
+      }),
+    });
+    adapter.register();
+    expect(registered.sort()).toEqual([...DECLARED_TOOLS].sort());
+    store.resetSearchStoreForTests();
+  });
+
+  it("registers tools from the home page only", () => {
+    const pagesDir = join(root, "src/pages");
+    const pages = walk(pagesDir).filter((file) => /\.astro$/.test(file));
+    const withRegistration = pages.filter((file) =>
+      readFileSync(file, "utf8").includes("registerWebMcpTools"),
+    );
+    expect(withRegistration).toEqual([join(pagesDir, "index.astro")]);
   });
 
   it("exposes no npm scope or inside-scope endpoints", () => {

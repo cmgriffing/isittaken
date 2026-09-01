@@ -1,172 +1,62 @@
-import { useCallback, useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { ComposedCandidate, RegistryId, SearchResponse } from "../domain/types";
-import { REGISTRY_LINEUP, registryById } from "../domain/registries";
+import { REGISTRY_LINEUP } from "../domain/registries";
 import type { RegistryDescriptor } from "../domain/registries";
-import {
-  createAvailabilityService,
-  type AvailabilityService,
-  type VerdictCell,
-} from "../lib/client/availability";
-import {
-  fetchSession,
-  mergeCandidates,
-  searchCreative,
-  searchOrdinary,
-  type CreativeClientResult,
-  type CreativeOk,
-  type SessionState,
-} from "../lib/client/api";
+import type { VerdictCell } from "../lib/client/availability";
+import type { SearchStore, SearchState } from "../lib/client/search-store";
+import { getSearchStore } from "../lib/client/search-store";
+import { fetchSession, type CreativeOk, type SessionState } from "../lib/client/api";
 import { PROVENANCE_LABELS, REGISTRY_STATUS_LABELS } from "../lib/client/labels";
 import GitHubSignIn from "./GitHubSignIn";
 
-type OrdinaryPhase = "idle" | "loading" | "error" | "done";
-
 interface Props {
   initialSeed?: string;
-}
-
-const REGISTRY_SELECTION_STORAGE_KEY = "iit_registry_selection";
-
-function defaultSelection(): RegistryId[] {
-  return REGISTRY_LINEUP.map((descriptor) => descriptor.id);
-}
-
-function loadSelection(): RegistryId[] {
-  try {
-    const raw = localStorage.getItem(REGISTRY_SELECTION_STORAGE_KEY);
-    if (!raw) return defaultSelection();
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return defaultSelection();
-    // Only supported ids, lineup order preserved.
-    return REGISTRY_LINEUP.filter((descriptor) => parsed.includes(descriptor.id)).map(
-      (descriptor) => descriptor.id,
-    );
-  } catch {
-    return defaultSelection();
-  }
-}
-
-function saveSelection(ids: RegistryId[]): void {
-  try {
-    localStorage.setItem(REGISTRY_SELECTION_STORAGE_KEY, JSON.stringify(ids));
-  } catch {
-    // Storage unavailability never breaks the search itself.
-  }
-}
-
-function cellKey(candidateName: string, registryId: RegistryId): string {
-  return `${candidateName}|${registryId}`;
+  /** Test seam: a store instance overriding the page singleton. */
+  store?: SearchStore;
 }
 
 /**
  * The interactive search experience. Ordinary discovery (seed + Wordnik +
  * OpenRouter candidates) returns names with provenance; availability across
- * the selected registries fans out progressively from the client.
+ * the selected registries fans out progressively from the shared store's
+ * service. The island is a pure view of the module-level store, so agent
+ * batches land in the same grid.
  */
-export default function SearchIsland({ initialSeed = "" }: Props) {
+export default function SearchIsland({ initialSeed = "", store: storeOverride }: Props) {
+  const store = storeOverride ?? getSearchStore();
   const [seed, setSeed] = useState(initialSeed);
-  const [ordinary, setOrdinary] = useState<SearchResponse | null>(null);
-  const [phase, setPhase] = useState<OrdinaryPhase>("idle");
-  const [message, setMessage] = useState<string | null>(null);
-  const [retryAfterSeconds, setRetryAfterSeconds] = useState<number | null>(null);
-
-  const [creative, setCreative] = useState<CreativeClientResult | null>(null);
-  const [creativeLoading, setCreativeLoading] = useState(false);
-
-  const [selectedIds, setSelectedIds] = useState<RegistryId[]>(loadSelection);
-  const [cells, setCells] = useState<Map<string, VerdictCell>>(new Map());
+  const [state, setState] = useState<SearchState>(() => store.getState());
   const [session, setSession] = useState<SessionState | null>(null);
 
-  const merged = useMemo<ComposedCandidate[]>(
-    () =>
-      mergeCandidates([
-        ordinary?.candidates,
-        creative?.status === "ok" ? creative.data.candidates : undefined,
-      ]),
-    [ordinary, creative],
-  );
+  useEffect(() => store.subscribe(() => setState(store.getState())), [store]);
 
-  const selectionKey = selectedIds.join(",");
-  const selectedDescriptors = useMemo(
-    () => selectedIds.map((id) => registryById(id)).filter((d): d is RegistryDescriptor => !!d),
-    [selectionKey],
-  );
-
-  const applyCell = useCallback((cell: VerdictCell) => {
-    setCells((previous) => {
-      const next = new Map(previous);
-      next.set(cellKey(cell.candidateName, cell.registry), cell);
-      return next;
-    });
-  }, []);
-
-  const service = useMemo<AvailabilityService | null>(() => {
-    if (typeof window === "undefined") return null;
-    return createAvailabilityService({ registries: selectedDescriptors, onResult: applyCell });
-  }, [selectionKey, applyCell]);
-
-  // Fan out availability checks whenever candidates or the registry
-  // selection change. The service dedupes and caches; results stream in.
+  // Push the initial seed into the store so agent tools share it.
   useEffect(() => {
-    if (!service || merged.length === 0 || selectedDescriptors.length === 0) return;
-    void service.checkCandidates(merged.map((candidate) => ({ name: candidate.name })));
-  }, [service, merged]);
+    if (initialSeed) store.setSeed(initialSeed);
+  }, [store, initialSeed]);
 
   // Session is only needed once results (and the creative section) exist.
+  const phase = state.phase;
   useEffect(() => {
     if (phase !== "done" || session !== null) return;
     void fetchSession().then(setSession);
   }, [phase, session]);
 
   function toggleRegistry(id: RegistryId, enabled: boolean) {
-    setSelectedIds((previous) => {
-      const next = enabled
-        ? REGISTRY_LINEUP.filter((d) => previous.includes(d.id) || d.id === id).map((d) => d.id)
-        : previous.filter((existing) => existing !== id);
-      saveSelection(next);
-      return next;
-    });
+    store.toggleRegistry(id, enabled);
   }
 
   async function runOrdinary(event?: Event) {
     event?.preventDefault();
-    const trimmed = seed.trim();
-    setMessage(null);
-    setRetryAfterSeconds(null);
-    if (!trimmed) {
-      setPhase("error");
-      setMessage("Enter a seed word first.");
-      return;
-    }
-    setPhase("loading");
-    const result = await searchOrdinary(trimmed);
-    if (result.status === "ok") {
-      setOrdinary(result.data);
-      setPhase("done");
-      return;
-    }
-    setPhase("error");
-    if (result.status === "invalid") setMessage(result.message);
-    else if (result.status === "rate-limited") {
-      setMessage(
-        result.retryAfterSeconds
-          ? `Too many searches — retry in ${result.retryAfterSeconds}s.`
-          : "Too many searches — wait a moment and retry.",
-      );
-      setRetryAfterSeconds(result.retryAfterSeconds);
-    } else setMessage("Search failed. Check your connection and retry.");
+    await store.runSearch(seed);
   }
 
   async function runCreative(regenerate: boolean) {
-    if (!seed.trim()) return;
-    setCreativeLoading(true);
-    const result = await searchCreative(seed.trim(), regenerate);
-    setCreative(result);
-    setCreativeLoading(false);
+    await store.runCreative(regenerate);
   }
 
-  const creativeSeed = creative?.status === "ok" ? creative.data.seed : null;
-  const seedUsed = creativeSeed ?? ordinary?.seed ?? null;
+  const creativeSeed = state.creative?.status === "ok" ? state.creative.data.seed : null;
+  const seedUsed = creativeSeed ?? state.ordinary?.seed ?? null;
 
   return (
     <section aria-labelledby="search-heading" class="search-island">
@@ -184,17 +74,20 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
             required
             onInput={(e) => setSeed((e.target as HTMLInputElement).value)}
           />
-          <button type="submit" disabled={phase === "loading"}>
-            {phase === "loading" ? "Searching…" : "Search"}
+          <button type="submit" disabled={state.phase === "loading"}>
+            {state.phase === "loading" ? "Searching…" : "Search"}
           </button>
         </div>
         <fieldset class="registry-toggles">
           <legend>Registries to check</legend>
           {REGISTRY_LINEUP.map((descriptor) => (
-            <label key={descriptor.id}>
+            <label
+              key={descriptor.id}
+              class={state.agentChangedIds.includes(descriptor.id) ? "agent-touched" : undefined}
+            >
               <input
                 type="checkbox"
-                checked={selectedIds.includes(descriptor.id)}
+                checked={state.selectedIds.includes(descriptor.id)}
                 onChange={(e) =>
                   toggleRegistry(descriptor.id, (e.target as HTMLInputElement).checked)
                 }
@@ -207,6 +100,13 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
             </label>
           ))}
         </fieldset>
+        {state.canRestore && (
+          <p class="restore-row">
+            <button type="button" class="secondary" onClick={() => store.restoreSavedSelection()}>
+              Restore saved selection
+            </button>
+          </p>
+        )}
         <p class="hint">
           crates.io, NuGet, and Packagist are checked in your browser — the rest via this site's
           API.
@@ -214,37 +114,40 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
       </form>
 
       <div aria-live="polite">
-        {message && phase === "error" && (
+        {state.message && state.phase === "error" && (
           <p role="alert" class="error">
-            {message}{" "}
+            {state.message}{" "}
             <button type="button" class="secondary" onClick={() => runOrdinary()}>
               Retry
             </button>
           </p>
         )}
-        {retryAfterSeconds !== null && phase === "error" && (
-          <p class="hint">You can retry in about {retryAfterSeconds} seconds.</p>
+        {state.retryAfterSeconds !== null && state.phase === "error" && (
+          <p class="hint">You can retry in about {state.retryAfterSeconds} seconds.</p>
         )}
       </div>
 
-      {phase === "done" && ordinary && (
+      {state.phase === "done" && state.ordinary && (
         <Results
-          seedLabel={seedUsed ?? ordinary.seed}
-          candidates={merged}
-          ordinarySources={ordinary.sources}
-          cells={cells}
-          selectedDescriptors={selectedDescriptors}
+          seedLabel={seedUsed ?? state.ordinary.seed}
+          candidates={state.candidates}
+          ordinarySources={state.ordinary.sources}
+          cells={state.cells}
+          selectedDescriptors={state.selectedIds
+            .map((id) => REGISTRY_LINEUP.find((d) => d.id === id))
+            .filter((d): d is RegistryDescriptor => !!d)}
+          progress={state.progress}
         />
       )}
 
-      {phase === "done" && (
+      {state.phase === "done" && (
         <div class="creative">
           <h3>Need more? Creative names</h3>
           {session === null ? null : session.authenticated ? (
             <CreativeControls
               seedMissing={!seed.trim()}
-              loading={creativeLoading}
-              result={creative}
+              loading={state.creativeLoading}
+              result={state.creative}
               onGenerate={() => runCreative(false)}
               onRegenerate={() => runCreative(true)}
             />
@@ -266,7 +169,7 @@ export default function SearchIsland({ initialSeed = "" }: Props) {
 function CreativeControls(props: {
   seedMissing: boolean;
   loading: boolean;
-  result: CreativeClientResult | null;
+  result: SearchState["creative"];
   onGenerate: () => void;
   onRegenerate: () => void;
 }) {
@@ -326,8 +229,9 @@ export function Results(props: {
   ordinarySources?: SearchResponse["sources"];
   cells: Map<string, VerdictCell>;
   selectedDescriptors: readonly RegistryDescriptor[];
+  progress?: { done: number; total: number } | null;
 }) {
-  const { seedLabel, candidates, ordinarySources, cells, selectedDescriptors } = props;
+  const { seedLabel, candidates, ordinarySources, cells, selectedDescriptors, progress } = props;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   function toggleExpanded(name: string) {
@@ -350,11 +254,15 @@ export function Results(props: {
           </p>
         ) : null,
       )}
+      {progress && (
+        <p class="batch-progress" role="status">
+          checking {progress.done} of {progress.total}…
+        </p>
+      )}
       {candidates.length === 0 && <p class="hint">No candidates yet — run a search.</p>}
       <ul class="candidates">
         {candidates.map((candidate) => {
-          const cellFor = (registryId: RegistryId) =>
-            cells.get(cellKey(candidate.name, registryId));
+          const cellFor = (registryId: RegistryId) => cells.get(`${candidate.name}|${registryId}`);
           const availableCount = selectedDescriptors.filter(
             (descriptor) => cellFor(descriptor.id)?.status === "available",
           ).length;
@@ -486,4 +394,4 @@ function RegistryResultItem(props: {
   );
 }
 
-export type { CreativeOk };
+export type { CreativeOk, VerdictCell };
