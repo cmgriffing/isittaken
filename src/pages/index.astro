@@ -3,6 +3,12 @@ import BaseLayout from "../layouts/BaseLayout.astro";
 import SearchIsland from "../islands/SearchIsland.tsx";
 ---
 
+<script>
+  // WebMCP tools: feature-detected, home page only, no-op elsewhere.
+  import { registerWebMcpTools } from "../lib/client/webmcp/adapter";
+  registerWebMcpTools();
+</script>
+
 <BaseLayout
   pageTitle="Is It Taken? Package name availability, checked."
   description="Search a seed word for synonyms, get creative AI alternatives, and check whether the names are available across npm, PyPI, RubyGems, Hex, Maven Central, crates.io, NuGet, and Packagist."

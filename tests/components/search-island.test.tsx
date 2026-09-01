@@ -7,11 +7,13 @@ import type { SearchResponse } from "../../src/domain/types";
 import type { RegistryDescriptor } from "../../src/domain/registries";
 import type { VerdictCell } from "../../src/lib/client/availability";
 import { VERDICT_CACHE_STORAGE_KEY } from "../../src/lib/client/verdict-cache";
+import { resetSearchStoreForTests } from "../../src/lib/client/search-store";
 
 afterEach(cleanup);
 
 beforeEach(() => {
   localStorage.clear();
+  resetSearchStoreForTests();
 });
 
 const seed = "laser";
@@ -343,6 +345,58 @@ describe("SearchIsland", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Generate creative names" }));
     expect(await screen.findByText("Daily generation quota exhausted.")).toBeTruthy();
     expect(screen.getByText("Names for “laser”")).toBeTruthy();
+  });
+});
+
+describe("agent-driven selection affordances", () => {
+  it("hides the restore control while live selection matches saved", async () => {
+    const fetchImpl = stubMultiRegistryFetch();
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Restore saved selection" })).toBeNull(),
+    );
+  });
+
+  it("shows the restore control after an agent changes the selection and restores on click", async () => {
+    const fetchImpl = stubMultiRegistryFetch();
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    typeSeedAndSubmit(seed);
+    await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
+
+    // Agent replaces the selection through the shared store.
+    const { getSearchStore } = await import("../../src/lib/client/search-store");
+    getSearchStore().setAgentSelection(["hex"]);
+    expect(await screen.findByRole("button", { name: "Restore saved selection" })).toBeTruthy();
+
+    // Agent-touched chips carry the marker class. Hex is in both the saved
+    // (all) and live selections, so the changed chips are the other seven.
+    const untouchedChip = screen.getByLabelText(/^Hex/).closest("label") as HTMLLabelElement;
+    expect(untouchedChip.className).not.toContain("agent-touched");
+    const changedChip = screen.getByLabelText(/^PyPI/).closest("label") as HTMLLabelElement;
+    expect(changedChip.className).toContain("agent-touched");
+
+    // One click restores the saved selection.
+    fireEvent.click(screen.getByRole("button", { name: "Restore saved selection" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Restore saved selection" })).toBeNull(),
+    );
+    expect((screen.getByLabelText(/^Hex/) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it("agent selection is not persisted to localStorage", async () => {
+    const fetchImpl = stubMultiRegistryFetch();
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    const { getSearchStore } = await import("../../src/lib/client/search-store");
+    // Establish a saved selection first (user toggle persists).
+    fireEvent.click(screen.getByLabelText(/^PyPI/) as HTMLInputElement);
+    expect(localStorage.getItem("iit_registry_selection")).not.toBeNull();
+    const saved = localStorage.getItem("iit_registry_selection");
+    // Agent replaces the live selection: the saved mirror must not change.
+    getSearchStore().setAgentSelection(["maven"]);
+    expect(localStorage.getItem("iit_registry_selection")).toBe(saved);
   });
 });
 

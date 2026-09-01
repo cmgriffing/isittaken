@@ -149,6 +149,15 @@ async function checkViaBrowser(
   }
 }
 
+export interface CheckCandidatesOptions {
+  /** Abort: stop scheduling new checks; in-flight work still settles. */
+  signal?: AbortSignal;
+  /** Fires with { done, total } after normalization+dedupe and per check. */
+  onProgress?: (progress: { done: number; total: number }) => void;
+  /** Override the target registries for this call (e.g. a single registry). */
+  registries?: readonly RegistryDescriptor[];
+}
+
 /**
  * Create the availability service. `onResult` fires for every cell state
  * transition: invalid classification, cached stale paint, and final verdicts.
@@ -266,15 +275,38 @@ export function createAvailabilityService(options: AvailabilityServiceOptions) {
   }
 
   /**
-   * Check every candidate against every selected registry. Idempotent:
-   * cached-fresh verdicts emit immediately, cached-stale verdicts paint
-   * with a "cached" hint and revalidate, and everything else goes to the
-   * network under the shared concurrency cap.
+   * Check every candidate against the service's registries, or against
+   * `overrides.registries` when provided (used by single-name tool calls
+   * that target one registry through the shared queue and cache).
+   *
+   * Idempotent: cached-fresh verdicts emit immediately, cached-stale
+   * verdicts paint with a "cached" hint and revalidate, and everything else
+   * goes to the network under the shared concurrency cap.
+   *
+   * `options.signal` stops scheduling new checks once aborted; work already
+   * in flight still settles (its verdicts are persisted) and the returned
+   * promise resolves without error. `options.onProgress`, when given, fires
+   * with `{ done, total }` after normalization+dedupe fix the total and
+   * after each check settles (done counts cached-fresh and locally-invalid
+   * cells immediately).
    */
-  async function checkCandidates(candidates: readonly { name: string }[]): Promise<void> {
+  async function checkCandidates(
+    candidates: readonly { name: string }[],
+    options: CheckCandidatesOptions = {},
+  ): Promise<void> {
+    const signal = options.signal ?? null;
+    const onProgress = options.onProgress ?? null;
+    const targetRegistries = options.registries ?? registries;
     const tasks: (() => Promise<void>)[] = [];
+    let done = 0;
+    let total = 0;
 
-    for (const descriptor of registries) {
+    const reportProgress = (): void => {
+      if (!onProgress) return;
+      onProgress({ done, total });
+    };
+
+    for (const descriptor of targetRegistries) {
       const normalize = normalizerFor(descriptor);
 
       // Dedupe registry-normalized names within this batch; one check per
@@ -293,6 +325,7 @@ export function createAvailabilityService(options: AvailabilityServiceOptions) {
         if (!validation.ok) {
           // Locally invalid: classified without any network request.
           for (const candidateName of candidateNames) {
+            done += 1;
             onResult({
               registry: descriptor.id,
               candidateName,
@@ -308,6 +341,7 @@ export function createAvailabilityService(options: AvailabilityServiceOptions) {
         const cached = cache.read(descriptor.id, checkedName, now());
         if (cached?.status === "fresh") {
           for (const candidateName of candidateNames) {
+            done += 1;
             emitCell(
               candidateName,
               descriptor,
@@ -323,9 +357,26 @@ export function createAvailabilityService(options: AvailabilityServiceOptions) {
         }
 
         tasks.push(async () => {
+          if (signal?.aborted) {
+            // Aborted before scheduling: emit a cancelled unknown cell so
+            // the grid never shows a stale "pending" square.
+            for (const candidateName of candidateNames) {
+              done += 1;
+              onResult({
+                registry: descriptor.id,
+                candidateName,
+                checkedName,
+                status: "unknown",
+                checkedAtMs: now(),
+                reason: "Check cancelled.",
+              });
+            }
+            return;
+          }
           const outcome = await outcomeFor({ descriptor, name: checkedName }, 0);
           persistVerdict(descriptor, checkedName, outcome);
           for (const candidateName of candidateNames) {
+            done += 1;
             emitCell(candidateName, descriptor, checkedName, outcome, false);
           }
         });
@@ -348,8 +399,18 @@ export function createAvailabilityService(options: AvailabilityServiceOptions) {
       }
     }
 
+    total = done + tasks.length;
+    reportProgress();
+
     // Run the queued checks under the shared concurrency cap.
-    await Promise.all(tasks.map(enqueue));
+    await Promise.all(
+      tasks.map((task) =>
+        enqueue(async () => {
+          await task();
+          if (!signal?.aborted) reportProgress();
+        }),
+      ),
+    );
   }
 
   return { checkCandidates };
