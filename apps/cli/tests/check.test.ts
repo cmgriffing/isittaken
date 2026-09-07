@@ -133,6 +133,11 @@ describe("runCheck JSON output", () => {
     for (const value of Object.values(payload.candidates[0]?.results ?? {})) {
       expect(Object.keys(value)).not.toContain("registry");
     }
+    // The agent-facing summary rollup.
+    expect(payload.summary.anyAvailable).toBe(true);
+    expect(payload.summary.available).toEqual([
+      { input: "myname", venues: ["npm"], fuzzyVenues: [] },
+    ]);
   });
 
   it("omits fuzzy/reason when the venue did not provide them", async () => {
@@ -172,6 +177,123 @@ describe("runCheck JSON output", () => {
   });
 });
 
+describe("runCheck JSON summary", () => {
+  it("rolls up availability with exact vs fuzzy venue split", async () => {
+    const { lines, out } = captureOut();
+    const code = await runCheck(
+      ["fresh", "gone", "fuzzy-only", "blocked"],
+      { json: true, concurrency: 2, timeoutMs: 100, registries: ["npm", "maven"] },
+      {
+        clock,
+        out,
+        registries: [
+          fakeRegistry({
+            id: "npm",
+            results: {
+              fresh: availableAt(1),
+              gone: takenAt(2),
+              "fuzzy-only": takenAt(3),
+              blocked: unknownAt(4, "rate limit"),
+            },
+          }),
+          fakeRegistry({
+            id: "maven",
+            results: {
+              fresh: { status: "available", checkedAtMs: 5, fuzzy: true, reason: "search" },
+              gone: takenAt(6),
+              "fuzzy-only": {
+                status: "available",
+                checkedAtMs: 7,
+                fuzzy: true,
+                reason: "search",
+              },
+              blocked: unknownAt(8, "rate limit"),
+            },
+          }),
+        ],
+      },
+    );
+
+    expect(code).toBe(0);
+    const payload = JSON.parse(lines[0] ?? "{}") as CheckJsonPayload;
+    // counts across every (input, venue) pair: 8 results total.
+    expect(payload.summary.counts).toEqual({
+      available: 3,
+      taken: 3,
+      invalid: 0,
+      unknown: 2,
+    });
+    // available: 3 (fresh-npm, fresh-maven-fuzzy, fuzzy-only-maven-fuzzy)
+    expect(payload.summary.anyAvailable).toBe(true);
+    expect(payload.summary.available).toEqual([
+      // canonical scope order: npm before maven
+      { input: "fresh", venues: ["npm"], fuzzyVenues: ["maven"] },
+      { input: "fuzzy-only", venues: [], fuzzyVenues: ["maven"] },
+    ]);
+    // Unavailable inputs are not listed.
+    expect(payload.summary.available.some((e) => e.input === "gone")).toBe(false);
+    expect(payload.summary.available.some((e) => e.input === "blocked")).toBe(false);
+  });
+
+  it("reports an empty rollup when nothing is available", async () => {
+    const { lines, out } = captureOut();
+    const code = await runCheck(
+      ["gone"],
+      { json: true, concurrency: 2, timeoutMs: 100, registries: ["npm"] },
+      { clock, out, registries: [fakeRegistry({ id: "npm", results: { gone: takenAt(1) } })] },
+    );
+    const payload = JSON.parse(lines[0] ?? "{}") as CheckJsonPayload;
+    expect(payload.summary).toEqual({
+      anyAvailable: false,
+      counts: { available: 0, taken: 1, invalid: 0, unknown: 0 },
+      available: [],
+    });
+    expect(code).toBe(1);
+  });
+});
+
+describe("runCheck human verdict lines", () => {
+  it("appends per-input verdicts after the table", async () => {
+    const { lines, out } = captureOut();
+    await runCheck(
+      ["fresh", "gone"],
+      { json: false, concurrency: 2, timeoutMs: 100, registries: ["npm", "maven"] },
+      {
+        clock,
+        out,
+        registries: [
+          fakeRegistry({ id: "npm", results: { fresh: availableAt(1), gone: takenAt(2) } }),
+          fakeRegistry({
+            id: "maven",
+            results: {
+              fresh: { status: "available", checkedAtMs: 3, fuzzy: true, reason: "search" },
+              gone: takenAt(4),
+            },
+          }),
+        ],
+      },
+    );
+    const table = lines[0] ?? "";
+    expect(table).toContain("input"); // header row first
+    const verdicts = lines.slice(1).filter((line) => line.length > 0);
+    expect(verdicts).toContain(
+      "fresh: available on: npm; fuzzy leads: maven (verify before relying)",
+    );
+    // Fully-unavailable inputs get no verdict line (the table shows them).
+    expect(verdicts.some((line) => line.startsWith("gone:"))).toBe(false);
+  });
+
+  it("prints a no-availability verdict when nothing is available", async () => {
+    const { lines, out } = captureOut();
+    await runCheck(
+      ["gone"],
+      { json: false, concurrency: 2, timeoutMs: 100, registries: ["npm"] },
+      { clock, out, registries: [fakeRegistry({ id: "npm", results: { gone: takenAt(1) } })] },
+    );
+    expect(lines[lines.length - 1]).toBe("no available names found.");
+  });
+});
+
 describe("runCheck human table output", () => {
   it("renders aligned venue columns with a fuzzy suffix", async () => {
     const { lines, out } = captureOut();
@@ -206,7 +328,7 @@ describe("runCheck human table output", () => {
     expect(table).toMatch(/available \(fuzzy\)/);
     expect(table).toMatch(/taken \(fuzzy\)/);
     // Column alignment: every data row starts at the same offset.
-    const dataLines = lines.slice(1);
+    const dataLines = lines.slice(1).filter((line) => line.length > 0);
     for (const line of dataLines) {
       expect(line.startsWith("gone") || line.startsWith("open")).toBe(true);
     }

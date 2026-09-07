@@ -48,7 +48,10 @@ available? It classifies conservatively and never invents names for you.
    `--json` is the primary machine-readable output. The default output is a
    human table. One run accepts any number of names.
 
-3. **Interpret the results** (see below). Only `available` is claimable.
+3. **Interpret the results** (see below). Only `available` is claimable —
+   start from the top-level `summary.available` rollup: it lists each input
+   with its exact `venues` (definitive, claimable) and `fuzzyVenues`
+   (search-index leads to verify).
 4. **Verify before publishing.** Before relying on any result — especially a
    fuzzy one — confirm the name on the venue itself (its registry page or
    official search). The venue is the authority; this tool observes, it does
@@ -93,6 +96,12 @@ was consulted. They appear in the table as e.g. `available (fuzzy)`:
   directly.
 - Exact venues (`npm`, `pypi`, `crates`, `rubygems`, `nuget`, `hex`) never
   produce fuzzy results: their not-found responses are definitive.
+- The top-level `summary` in JSON output does the rollup for you:
+  `summary.anyAvailable` answers "did anything come back available?",
+  `summary.counts` tallies every (input, venue) result, and
+  `summary.available` lists each claimable input with exact `venues`
+  (definitive) separate from `fuzzyVenues` (leads). Inputs with no available
+  results are omitted from the rollup.
 
 ## Scoping and precision
 
@@ -132,6 +141,17 @@ was consulted. They appear in the table as e.g. `available (fuzzy)`:
 ```json
 {
   "venues": ["npm", "pypi", "crates", "rubygems", "nuget", "hex", "maven", "go", "packagist"],
+  "summary": {
+    "anyAvailable": true,
+    "counts": { "available": 7, "taken": 0, "invalid": 6, "unknown": 2 },
+    "available": [
+      {
+        "input": "fuzzy picker",
+        "venues": ["npm"],
+        "fuzzyVenues": ["maven", "go", "packagist"]
+      }
+    ]
+  },
   "candidates": [
     {
       "input": "fuzzy picker",

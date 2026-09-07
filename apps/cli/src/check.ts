@@ -5,6 +5,7 @@ import {
   type Clock,
   type PackageRegistry,
   type RegistryResult,
+  type RegistryStatus,
   type VenueId,
 } from "@isittaken/core";
 import { createClock } from "./clock.js";
@@ -41,8 +42,19 @@ export interface VenueResultJson {
   reason?: string;
 }
 
+/** Rollup that lets agents answer "what can I claim?" without scanning venues. */
+export interface CheckSummary {
+  /** True when at least one (input, venue) result is `available`. */
+  anyAvailable: boolean;
+  /** Result counts across every (input, venue) pair. */
+  counts: Record<RegistryStatus, number>;
+  /** Inputs with at least one `available` result, split by certainty. */
+  available: { input: string; venues: VenueId[]; fuzzyVenues: VenueId[] }[];
+}
+
 export interface CheckJsonPayload {
   venues: VenueId[];
+  summary: CheckSummary;
   candidates: { input: string; results: Record<string, VenueResultJson> }[];
 }
 
@@ -78,28 +90,89 @@ export async function runCheck(
     registryConcurrency: flags.concurrency,
   });
 
-  const payload: CheckJsonPayload = {
-    venues: [...scope],
-    candidates: inputs.map((input, index) => {
-      const byVenue: Record<string, VenueResultJson> = {};
-      for (const result of results[index] ?? []) {
-        const { registry: _registry, ...rest } = result;
-        byVenue[result.registry] = rest;
-      }
-      return { input, results: byVenue };
-    }),
-  };
+  const payload = buildPayload(inputs, scope, results);
+  const anyAvailable = payload.summary.anyAvailable;
 
   if (flags.json) {
     out(JSON.stringify(payload, null, 2));
   } else {
     out(renderTable(payload));
+    out("");
+    for (const line of renderVerdicts(payload)) out(line);
   }
 
-  const anyAvailable = results.some((venueResults) =>
-    venueResults.some((result) => result.status === "available"),
-  );
   return anyAvailable ? 0 : 1;
+}
+
+/**
+ * Assemble the output payload from raw primitive results: per-input venue
+ * maps plus the agent-facing summary rollup.
+ */
+function buildPayload(
+  inputs: readonly string[],
+  scope: readonly VenueId[],
+  results: readonly RegistryResult[][],
+): CheckJsonPayload {
+  const counts: Record<RegistryStatus, number> = {
+    available: 0,
+    taken: 0,
+    invalid: 0,
+    unknown: 0,
+  };
+  for (const venueResults of results) {
+    for (const result of venueResults) {
+      counts[result.status] += 1;
+    }
+  }
+
+  /** Re-order raw venue ids into canonical scope order. */
+  const orderIn = (ids: readonly string[]): VenueId[] =>
+    scope.filter((venue) => ids.includes(venue));
+
+  const available: CheckSummary["available"] = [];
+  const candidates = inputs.map((input, index) => {
+    const byVenue: Record<string, VenueResultJson> = {};
+    const exact: string[] = [];
+    const fuzzy: string[] = [];
+    for (const result of results[index] ?? []) {
+      const { registry: _registry, ...rest } = result;
+      byVenue[result.registry] = rest;
+      if (result.status === "available") {
+        (result.fuzzy === true ? fuzzy : exact).push(result.registry);
+      }
+    }
+    if (exact.length > 0 || fuzzy.length > 0) {
+      available.push({ input, venues: orderIn(exact), fuzzyVenues: orderIn(fuzzy) });
+    }
+    return { input, results: byVenue };
+  });
+
+  return {
+    venues: [...scope],
+    summary: { anyAvailable: counts.available > 0, counts, available },
+    candidates,
+  };
+}
+
+/**
+ * Trailing verdict lines for the human output — also the friendliest thing
+ * for an agent that read the default output instead of `--json`:
+ *   <input>: available on npm, pypi; fuzzy leads: maven, go (verify)
+ */
+function renderVerdicts(payload: CheckJsonPayload): string[] {
+  if (payload.summary.available.length === 0) {
+    return ["no available names found."];
+  }
+  return payload.summary.available.map((entry) => {
+    const parts: string[] = [];
+    if (entry.venues.length > 0) {
+      parts.push(`available on: ${entry.venues.join(", ")}`);
+    }
+    if (entry.fuzzyVenues.length > 0) {
+      parts.push(`fuzzy leads: ${entry.fuzzyVenues.join(", ")} (verify before relying)`);
+    }
+    return `${entry.input}: ${parts.join("; ")}`;
+  });
 }
 
 /**

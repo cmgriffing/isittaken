@@ -85,6 +85,12 @@ results carry `fuzzy: true`; qualified input upgrades them to exact checks).
 Go bare-word search is best-effort and honestly reports `unknown` when
 pkg.go.dev rate-limits the client.
 
+`--json` output is agent-first: a top-level `summary` rollup answers "what
+can I claim?" directly — `anyAvailable`, per-status `counts`, and an
+`available` list mapping each input to its exact venues (definitive) and its
+`fuzzyVenues` (search-index leads to verify). The human table ends with
+per-input verdict lines carrying the same rollup.
+
 Exit codes: `0` = at least one (name, venue) result is `available`; `1` =
 none available; `2` = usage error.
 
