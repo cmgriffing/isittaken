@@ -25,7 +25,8 @@ manually with the one-shot flow below, then re-enable one shard at a time.
 ## Local one-shot invocation
 
 The shards run against whatever `DATABASE_URL` the environment provides; with
-no configuration they use the local SQLite file `file:./local.db`.
+no configuration they use the local SQLite file `file:./local.db`. Run these
+commands from `apps/web/`.
 
 ```bash
 # 1. Local SQLite migrations

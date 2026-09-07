@@ -5,6 +5,9 @@ dist/
 # dependencies
 node_modules/
 
+# turbo
+.turbo/
+
 # netlify
 .netlify/
 

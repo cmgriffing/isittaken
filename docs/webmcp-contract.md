@@ -54,6 +54,11 @@ The HTTP `/api/search` handler calls exactly this function. A WebMCP adapter
 would call it the same way; injected candidates follow the same limits,
 provenance, deduplication, and availability behavior as HTTP requests.
 
+The models and use case now live in the shared, transport-neutral
+`packages/core` package (`@isittaken/core`) — also consumed by the `isittaken`
+CLI — and the web app imports them from there. The contract below is
+unchanged.
+
 ## Response model
 
 ```ts
@@ -78,6 +83,9 @@ interface RegistryResult {
   status: "available" | "taken" | "invalid" | "unknown";
   checkedAtMs: number;
   reason?: string;
+  fuzzy?: boolean; // optional; multi-venue fuzzy-capable venues only.
+  // The web app checks npm only (an exact venue), so web API responses
+  // never carry this flag — the HTTP contract is observably unchanged.
 }
 ```
 

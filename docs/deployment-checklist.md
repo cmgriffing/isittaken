@@ -1,6 +1,7 @@
 # Deployment Checklist — build-package-name-finder
 
-Recorded from the full verification run (`pnpm verify`) on 2026-08-30.
+Recorded from the full verification run (`pnpm verify`) on 2026-08-30. The web
+app lives in `apps/web/`; run every command below from `apps/web`.
 
 | Check                                           | Command                                                    | Outcome                                                                                               |
 | ----------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |

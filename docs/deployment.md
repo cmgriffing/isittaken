@@ -21,6 +21,8 @@ the same variables under **Site settings → Environment variables**.
 
 ## Local SQLite setup and migrations
 
+The web app lives in `apps/web/`; run these commands from `apps/web`.
+
 ```bash
 pnpm install
 cp .env.example .env          # DATABASE_URL=file:./local.db by default
@@ -28,8 +30,8 @@ pnpm migrate                  # applies versioned migrations idempotently
 pnpm dev                      # astro dev with Netlify env emulation
 ```
 
-Migrations live in `src/db/migrations.mjs` (shared by the app and the CLI)
-and are tracked in the `_migrations` table. `node scripts/run-migrations.mjs`
+Migrations live in `apps/web/src/db/migrations.mjs` (shared by the app and the
+CLI) and are tracked in the `_migrations` table. `node scripts/run-migrations.mjs`
 is what `pnpm migrate` runs; it reads `.env` itself.
 
 ## GitHub OAuth registration
