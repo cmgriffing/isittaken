@@ -10,6 +10,7 @@ import {
 } from "@isittaken/core";
 import { createClock } from "./clock.js";
 import { createRegistries } from "./registries.js";
+import { createTheme, detectColor, type Theme } from "./style.js";
 
 /** Validated flags for the `check` command (defaults applied by the parser). */
 export interface CheckFlags {
@@ -30,6 +31,12 @@ export interface CheckDeps {
   clock?: Clock;
   /** Output sink (stdout by default). */
   out?: (line: string) => void;
+  /** Progress sink for non-JSON runs (stderr by default). */
+  progress?: (line: string) => void;
+  /** Force color on/off (tests); default TTY + NO_COLOR/FORCE_COLOR detection. */
+  color?: boolean;
+  /** Terminal width for reason truncation (tests); default process.stdout.columns. */
+  columns?: number;
 }
 
 /** Per-venue result as emitted in JSON output; the venue id is the map key. */
@@ -62,6 +69,31 @@ function defaultOut(line: string): void {
   process.stdout.write(`${line}\n`);
 }
 
+function defaultProgress(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
+
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+/** Compact per-venue status tally, e.g. `2 available, 1 unknown`. */
+function describeStatuses(venueResults: readonly RegistryResult[][]): string {
+  const counts: Record<RegistryStatus, number> = {
+    available: 0,
+    taken: 0,
+    invalid: 0,
+    unknown: 0,
+  };
+  for (const result of venueResults.flat()) {
+    counts[result.status] += 1;
+  }
+  const parts = (Object.entries(counts) as [RegistryStatus, number][])
+    .filter(([, n]) => n > 0)
+    .map(([status, n]) => `${n} ${status}`);
+  return parts.length > 0 ? parts.join(", ") : "no names";
+}
+
 /**
  * The `check` command core: every input becomes a candidate, venues in scope
  * are checked via the shared primitive, results are rendered (JSON or table),
@@ -74,6 +106,11 @@ export async function runCheck(
   deps: CheckDeps = {},
 ): Promise<number> {
   const out = deps.out ?? defaultOut;
+  const progress = deps.progress ?? defaultProgress;
+  // JSON mode must stay pure machine-readable: no progress on any stream.
+  const reportProgress = flags.json ? undefined : progress;
+  const theme = createTheme(deps.color ?? detectColor(process.stdout, process.env));
+  const columns = deps.columns ?? process.stdout.columns;
   const clock = deps.clock ?? createClock();
   const requested = flags.registries ?? [...VENUE_IDS];
   // Canonical venue order regardless of the order ids were passed in.
@@ -84,11 +121,36 @@ export async function runCheck(
 
   const candidates = inputs.map((input) => ({ normalized: normalizeCandidateValue(input) }));
 
-  const results = await checkCandidatesAcrossRegistries(candidates, {
-    registries,
-    clock,
-    registryConcurrency: flags.concurrency,
-  });
+  if (reportProgress) {
+    reportProgress(
+      `checking ${scope.length} venue${scope.length === 1 ? "" : "s"} for ` +
+        `${inputs.length} name${inputs.length === 1 ? "" : "s"} (concurrency ` +
+        `${flags.concurrency})...`,
+    );
+  }
+
+  // One primitive call per venue: the venues already run sequentially inside
+  // the primitive, so this is behavior-identical while making each venue a
+  // progress checkpoint. Results are concatenated per candidate in scope
+  // order, exactly as a single multi-venue call would produce them.
+  const results: RegistryResult[][] = inputs.map(() => []);
+  for (const [venueIndex, venue] of scope.entries()) {
+    const venueRegistries = registries.filter((registry) => registry.id === venue);
+    const startedAtMs = clock.nowMs();
+    const venueResults = await checkCandidatesAcrossRegistries(candidates, {
+      registries: venueRegistries,
+      clock,
+      registryConcurrency: flags.concurrency,
+    });
+    const durationMs = Math.max(0, clock.nowMs() - startedAtMs);
+    for (const [candidateIndex, result] of venueResults.entries()) {
+      results[candidateIndex]?.push(...result);
+    }
+    reportProgress?.(
+      `[${venueIndex + 1}/${scope.length}] ${venue} — ${describeStatuses(venueResults)} ` +
+        `(${formatDuration(durationMs)})`,
+    );
+  }
 
   const payload = buildPayload(inputs, scope, results);
   const anyAvailable = payload.summary.anyAvailable;
@@ -96,7 +158,7 @@ export async function runCheck(
   if (flags.json) {
     out(JSON.stringify(payload, null, 2));
   } else {
-    out(renderTable(payload));
+    for (const line of renderBlocks(payload, theme, columns)) out(line);
     out("");
     for (const line of renderVerdicts(payload)) out(line);
   }
@@ -175,33 +237,60 @@ function renderVerdicts(payload: CheckJsonPayload): string[] {
   });
 }
 
-/**
- * Aligned table: first column is the original input, then one column per
- * venue in scope. Fuzzy results render with a ` (fuzzy)` suffix so leads are
- * visually distinct from definitive verdicts.
- */
-function renderTable(payload: CheckJsonPayload): string {
-  const header = ["input", ...payload.venues];
-  const rows = payload.candidates.map((candidate) => [
-    candidate.input,
-    ...payload.venues.map((venue) => {
-      const result = candidate.results[venue];
-      if (!result) return "-";
-      return result.fuzzy ? `${result.status} (fuzzy)` : result.status;
-    }),
-  ]);
+/** Fallback line-width cap when the terminal width is unknown. */
+const DEFAULT_MAX_COLUMNS = 100;
 
-  const widths = header.map((cell, column) =>
-    Math.max(cell.length, ...rows.map((row) => row[column]?.length ?? 0)),
-  );
-  const lines = [
-    header.map((cell, column) => cell.padEnd(widths[column] ?? 0)).join("  "),
-    ...rows.map((row) =>
-      row
-        .map((cell, column) => cell.padEnd(widths[column] ?? 0))
-        .join("  ")
-        .trimEnd(),
-    ),
-  ];
-  return lines.map((line) => line.trimEnd()).join("\n");
+/**
+ * Vertical report: one bordered block per input, venue rows stacked with
+ * colored statuses. Plain (escape-free) text is padded by its own length so
+ * borders align regardless of color. Reasons are shown dimmed and truncated
+ * to the terminal width.
+ */
+function renderBlocks(
+  payload: CheckJsonPayload,
+  theme: Theme,
+  columns: number | undefined,
+): string[] {
+  const limit = columns && columns > 20 ? columns : DEFAULT_MAX_COLUMNS;
+  const venueWidth = Math.max(...payload.venues.map((venue) => venue.length), 4);
+  const lines: string[] = [];
+
+  payload.candidates.forEach((candidate, candidateIndex) => {
+    const rows = payload.venues.map((venue) => {
+      const id = venue.padEnd(venueWidth);
+      const result = candidate.results[venue];
+      if (!result) {
+        return { plain: `${id}  -`, colored: theme.dim(`${id}  -`) };
+      }
+      const statusText = result.fuzzy ? `${result.status} (fuzzy)` : result.status;
+      const statusColored =
+        theme.status(result.status, result.status) + (result.fuzzy ? theme.fuzzy(" (fuzzy)") : "");
+      let reasonPlain = result.reason ? ` · ${result.reason}` : "";
+      let plain = `${id}  ${statusText}${reasonPlain}`;
+      if (plain.length > limit && result.reason) {
+        // Reserve room for the " · " separator and the trailing "…".
+        const room = Math.max(0, limit - (venueWidth + 2 + statusText.length + 4));
+        const truncated = result.reason.slice(0, room) + (room < result.reason.length ? "…" : "");
+        reasonPlain = ` · ${truncated}`;
+        plain = `${id}  ${statusText}${reasonPlain}`;
+      }
+      const colored = `${id}  ${statusColored}${reasonPlain ? theme.dim(reasonPlain) : ""}`;
+      return { plain, colored };
+    });
+
+    const title = candidate.input;
+    const width = Math.max(
+      title.length + 4,
+      venueWidth + 12,
+      ...rows.map((row) => row.plain.length),
+    );
+    lines.push(`┌─ ${theme.bold(title)} ${"─".repeat(Math.max(0, width - title.length - 1))}┐`);
+    for (const row of rows) {
+      lines.push(`│ ${row.colored}${" ".repeat(Math.max(0, width - row.plain.length))} │`);
+    }
+    lines.push(`└${"─".repeat(width + 2)}┘`);
+    if (candidateIndex < payload.candidates.length - 1) lines.push("");
+  });
+
+  return lines;
 }

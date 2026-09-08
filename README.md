@@ -88,8 +88,13 @@ pkg.go.dev rate-limits the client.
 `--json` output is agent-first: a top-level `summary` rollup answers "what
 can I claim?" directly — `anyAvailable`, per-status `counts`, and an
 `available` list mapping each input to its exact venues (definitive) and its
-`fuzzyVenues` (search-index leads to verify). The human table ends with
-per-input verdict lines carrying the same rollup.
+`fuzzyVenues` (search-index leads to verify). The human output is vertical:
+one bordered, colored block per input with stacked venue rows (green
+available / red taken / yellow unknown / dim invalid / cyan fuzzy marker)
+followed by per-input verdict lines; color is automatically disabled for
+piped output (`NO_COLOR` honored). Non-JSON runs also stream per-venue
+progress checkpoints to stderr (`[2/9] pypi — 3 available, 1 taken (150ms)`)
+while stdout stays clean; `--json` output is never mixed with progress.
 
 Exit codes: `0` = at least one (name, venue) result is `available`; `1` =
 none available; `2` = usage error.

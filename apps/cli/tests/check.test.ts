@@ -273,13 +273,13 @@ describe("runCheck human verdict lines", () => {
         ],
       },
     );
-    const table = lines[0] ?? "";
-    expect(table).toContain("input"); // header row first
+    const text = lines.join("\n");
+    expect(text).toContain("┌─ fresh "); // block per input comes first
     const verdicts = lines.slice(1).filter((line) => line.length > 0);
     expect(verdicts).toContain(
       "fresh: available on: npm; fuzzy leads: maven (verify before relying)",
     );
-    // Fully-unavailable inputs get no verdict line (the table shows them).
+    // Fully-unavailable inputs get no verdict line (the block shows them).
     expect(verdicts.some((line) => line.startsWith("gone:"))).toBe(false);
   });
 
@@ -294,8 +294,98 @@ describe("runCheck human verdict lines", () => {
   });
 });
 
-describe("runCheck human table output", () => {
-  it("renders aligned venue columns with a fuzzy suffix", async () => {
+describe("runCheck progress (non-JSON only)", () => {
+  function captureProgress(): { lines: string[]; progress: (line: string) => void } {
+    const lines: string[] = [];
+    return { lines, progress: (line) => lines.push(line) };
+  }
+
+  it("reports venue-by-venue checkpoints on the progress sink", async () => {
+    const { out } = captureOut();
+    const { lines: progressLines, progress } = captureProgress();
+    await runCheck(
+      ["fresh", "gone"],
+      { json: false, concurrency: 3, timeoutMs: 100, registries: ["npm", "maven"] },
+      {
+        clock,
+        out,
+        progress,
+        registries: [
+          fakeRegistry({ id: "npm", results: { fresh: availableAt(1), gone: takenAt(2) } }),
+          fakeRegistry({
+            id: "maven",
+            results: {
+              fresh: { status: "available", checkedAtMs: 3, fuzzy: true, reason: "search" },
+              gone: unknownAt(4, "rate limit"),
+            },
+          }),
+        ],
+      },
+    );
+
+    expect(progressLines[0]).toContain("checking 2 venues for 2 names (concurrency 3)");
+    expect(progressLines.some((line) => /^\[1\/2\] npm — 1 available, 1 taken \(/.test(line))).toBe(
+      true,
+    );
+    expect(
+      progressLines.some((line) => /^\[2\/2\] maven — 1 available, 1 unknown \(/.test(line)),
+    ).toBe(true);
+    // Every checkpoint carries a duration.
+    for (const line of progressLines.slice(1)) {
+      expect(line).toMatch(/\((\d+ms|\d+\.\ds)\)$/);
+    }
+    // Progress never leaks into the stdout payload.
+    expect(out).toBeDefined();
+    expect(progressLines.join("\n")).not.toContain("available on:");
+  });
+
+  it("emits no progress in JSON mode", async () => {
+    const { lines, out } = captureOut();
+    const { lines: progressLines, progress } = captureProgress();
+    await runCheck(
+      ["x"],
+      { json: true, concurrency: 2, timeoutMs: 100, registries: ["npm"] },
+      {
+        clock,
+        out,
+        progress,
+        registries: [fakeRegistry({ id: "npm", results: { x: availableAt(1) } })],
+      },
+    );
+    expect(progressLines).toHaveLength(0);
+    // The JSON document on stdout is unaffected.
+    const payload = JSON.parse(lines[0] ?? "{}") as CheckJsonPayload;
+    expect(payload.candidates[0]?.results.npm?.status).toBe("available");
+  });
+
+  it("keeps per-candidate results identical to a single multi-venue call", async () => {
+    const { lines, out } = captureOut();
+    const { lines: _progressLines, progress } = captureProgress();
+    await runCheck(
+      ["fresh", "gone"],
+      { json: true, concurrency: 3, timeoutMs: 100, registries: ["npm", "maven"] },
+      {
+        clock,
+        out,
+        progress,
+        registries: [
+          fakeRegistry({ id: "npm", results: { fresh: availableAt(1), gone: takenAt(2) } }),
+          fakeRegistry({ id: "maven", results: { fresh: availableAt(3), gone: availableAt(4) } }),
+        ],
+      },
+    );
+    const payload = JSON.parse(lines[0] ?? "{}") as CheckJsonPayload;
+    // Venue order within each candidate is the canonical scope order.
+    expect(Object.keys(payload.candidates[0]?.results ?? {})).toEqual(["npm", "maven"]);
+    expect(Object.keys(payload.candidates[1]?.results ?? {})).toEqual(["npm", "maven"]);
+    // fresh: npm + maven; gone: maven only (npm taken) = 3 available of 4.
+    expect(payload.summary.counts.available).toBe(3);
+    expect(payload.summary.counts.taken).toBe(1);
+  });
+});
+
+describe("runCheck human block output (vertical, bordered)", () => {
+  it("renders one bordered vertical block per input, escape-free by default", async () => {
     const { lines, out } = captureOut();
     await runCheck(
       ["gone", "open"],
@@ -303,6 +393,7 @@ describe("runCheck human table output", () => {
       {
         clock,
         out,
+        color: false,
         registries: [
           fakeRegistry({
             id: "npm",
@@ -319,19 +410,105 @@ describe("runCheck human table output", () => {
       },
     );
 
-    const table = lines.join("\n");
-    const firstLine = lines[0] ?? "";
-    expect(firstLine).toContain("input");
-    expect(firstLine).toContain("npm");
-    expect(firstLine).toContain("maven");
-    // Fuzzy results are rendered distinctly.
-    expect(table).toMatch(/available \(fuzzy\)/);
-    expect(table).toMatch(/taken \(fuzzy\)/);
-    // Column alignment: every data row starts at the same offset.
-    const dataLines = lines.slice(1).filter((line) => line.length > 0);
-    for (const line of dataLines) {
-      expect(line.startsWith("gone") || line.startsWith("open")).toBe(true);
-    }
+    const text = lines.join("\n");
+    // Vertical layout: a titled, bordered block per input.
+    expect(text).toContain("┌─ gone ");
+    expect(text).toContain("┌─ open ");
+    expect(text).toContain("└");
+    expect(text).toContain("│");
+    // Venue rows stacked under each title, fuzzy rendered distinctly.
+    expect(text).toMatch(/npm\s+available/);
+    expect(text).toMatch(/maven\s+available \(fuzzy\)/);
+    expect(text).toMatch(/maven\s+taken \(fuzzy\)/);
+    // Reasons are surfaced in the vertical layout.
+    expect(text).toContain("· search");
+    // No ANSI escapes unless color is enabled.
+    expect(text).not.toContain("\x1b[");
+    // Verdicts still follow the blocks.
+    expect(text).toContain("gone: fuzzy leads: maven (verify before relying)");
+    expect(text).toContain("open: available on: npm");
+  });
+
+  it("colors statuses and titles when color is enabled", async () => {
+    const { lines, out } = captureOut();
+    await runCheck(
+      ["mixed"],
+      { json: false, concurrency: 2, timeoutMs: 100, registries: ["npm", "maven"] },
+      {
+        clock,
+        out,
+        color: true,
+        registries: [
+          fakeRegistry({
+            id: "npm",
+            results: {
+              mixed: availableAt(1),
+            },
+          }),
+          fakeRegistry({
+            id: "maven",
+            results: {
+              mixed: unknownAt(2, "rate limit"),
+            },
+          }),
+        ],
+      },
+    );
+
+    const text = lines.join("\n");
+    expect(text).toContain("\x1b[1m"); // bold block title
+    expect(text).toContain("\x1b[32m"); // green available
+    expect(text).toContain("\x1b[33m"); // yellow unknown
+    expect(text).toContain("\x1b[0m"); // resets
+  });
+
+  it("marks fuzzy leads with the cyan marker when color is enabled", async () => {
+    const { lines, out } = captureOut();
+    await runCheck(
+      ["lead"],
+      { json: false, concurrency: 2, timeoutMs: 100, registries: ["maven"] },
+      {
+        clock,
+        out,
+        color: true,
+        registries: [
+          fakeRegistry({
+            id: "maven",
+            results: {
+              lead: { status: "available", checkedAtMs: 3, fuzzy: true, reason: "search" },
+            },
+          }),
+        ],
+      },
+    );
+    const text = lines.join("\n");
+    expect(text).toContain("\x1b[36m (fuzzy)"); // cyan fuzzy marker
+  });
+
+  it("truncates long reasons to the terminal width", async () => {
+    const { lines, out } = captureOut();
+    const longReason = "x".repeat(200);
+    await runCheck(
+      ["truncated"],
+      { json: false, concurrency: 2, timeoutMs: 100, registries: ["npm"] },
+      {
+        clock,
+        out,
+        color: false,
+        columns: 60,
+        registries: [
+          fakeRegistry({
+            id: "npm",
+            results: { truncated: unknownAt(1, longReason) },
+          }),
+        ],
+      },
+    );
+    const row = lines.find((line) => line.includes("npm")) ?? "";
+    // The whole row (borders + content) must fit the requested width.
+    expect(row.length).toBeLessThanOrEqual(64);
+    expect(row).toContain("…");
+    expect(row).not.toContain("x".repeat(200));
   });
 });
 

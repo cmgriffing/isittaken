@@ -46,7 +46,9 @@ available? It classifies conservatively and never invents names for you.
    ```
 
    `--json` is the primary machine-readable output. The default output is a
-   human table. One run accepts any number of names.
+   vertical, bordered, colored report (one block per name) plus per-venue
+   progress on stderr; when piped, the report is escape-free plain text. One
+   run accepts any number of names.
 
 3. **Interpret the results** (see below). Only `available` is claimable —
    start from the top-level `summary.available` rollup: it lists each input
