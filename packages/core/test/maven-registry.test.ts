@@ -94,15 +94,46 @@ describe("createMavenRegistry bare (fuzzy) lookup", () => {
     );
   });
 
-  it("reports available+fuzzy when no doc matches", async () => {
+  it("reports available+fuzzy when no doc matches and the set is complete", async () => {
     const fetchImpl = fakeFetch(
-      new Response(JSON.stringify({ response: { docs: [{ a: "Other" }] } }), { status: 200 }),
+      new Response(JSON.stringify({ response: { numFound: 1, docs: [{ a: "Other" }] } }), {
+        status: 200,
+      }),
     );
     const result = await createMavenRegistry(baseOptions({ fetchImpl })).lookup("CommonsLang3");
     expect(result).toMatchObject({
       status: "available",
       fuzzy: true,
       reason: /not matched in the Maven Central search index/,
+    });
+  });
+
+  it("reports unknown+fuzzy when the search is paginated (numFound exceeds rows)", async () => {
+    const fetchImpl = fakeFetch(
+      new Response(
+        JSON.stringify({
+          response: { numFound: 50, docs: [{ a: "Commons" }, { a: "CommonsCli" }] },
+        }),
+        { status: 200 },
+      ),
+    );
+    const result = await createMavenRegistry(baseOptions({ fetchImpl })).lookup("CommonsLang3");
+    expect(result).toMatchObject({
+      status: "unknown",
+      fuzzy: true,
+      reason: "inconclusive search results.",
+    });
+  });
+
+  it("reports unknown+fuzzy when the body lacks a trustworthy numFound", async () => {
+    const fetchImpl = fakeFetch(
+      new Response(JSON.stringify({ response: { docs: [{ a: "Other" }] } }), { status: 200 }),
+    );
+    const result = await createMavenRegistry(baseOptions({ fetchImpl })).lookup("CommonsLang3");
+    expect(result).toMatchObject({
+      status: "unknown",
+      fuzzy: true,
+      reason: "inconclusive search results.",
     });
   });
 

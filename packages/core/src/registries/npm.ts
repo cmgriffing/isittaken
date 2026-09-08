@@ -1,6 +1,9 @@
 import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
+import { lookupPresence } from "./presence.js";
+import { classifyNotFound } from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 const MAX_NAME_LENGTH = 214;
 
@@ -69,57 +72,16 @@ export function createNpmRegistry(options: NpmRegistryOptions): PackageRegistry 
   });
 
   async function lookupUpstream(name: string): Promise<RegistryLookupResult> {
-    let response: Response;
-    try {
-      response = await doFetch(`${origin}/${encodeURIComponent(name)}`);
-    } catch (error) {
-      const timedOut = error instanceof Error && error.name === "TimeoutError";
-      return {
-        status: "unknown",
-        checkedAtMs: clock.nowMs(),
-        reason: timedOut ? "npm registry request timed out." : "npm registry request failed.",
-      };
-    }
-
-    if (response.status === 404) {
-      // npm's documented not-found response for a valid name.
-      return { status: "available", checkedAtMs: clock.nowMs() };
-    }
-
-    if (response.status === 429) {
-      return {
-        status: "unknown",
-        checkedAtMs: clock.nowMs(),
-        reason: "npm registry rate limit exceeded.",
-      };
-    }
-
-    if (response.status !== 200) {
-      return {
-        status: "unknown",
-        checkedAtMs: clock.nowMs(),
-        reason: `npm registry responded with status ${response.status}.`,
-      };
-    }
-
-    // 200: metadata proves presence only if the body is valid JSON metadata.
-    try {
-      const payload: unknown = await response.json();
-      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-        return {
-          status: "unknown",
-          checkedAtMs: clock.nowMs(),
-          reason: "npm registry returned an ambiguous response.",
-        };
-      }
-      return { status: "taken", checkedAtMs: clock.nowMs() };
-    } catch {
-      return {
-        status: "unknown",
-        checkedAtMs: clock.nowMs(),
-        reason: "npm registry returned an ambiguous response.",
-      };
-    }
+    return lookupPresence(`${origin}/${encodeURIComponent(name)}`, {
+      venue: "npm registry",
+      fetch: doFetch,
+      clock,
+      // npm metadata is an object; a bare array does not prove presence.
+      async confirmsPresence(response: Response): Promise<boolean> {
+        const payload: unknown = await response.json();
+        return typeof payload === "object" && payload !== null && !Array.isArray(payload);
+      },
+    });
   }
 
   return {
@@ -132,3 +94,23 @@ export function createNpmRegistry(options: NpmRegistryOptions): PackageRegistry 
     },
   };
 }
+
+/**
+ * npm registry descriptor (server venue). Scoped names are unsupported. The
+ * descriptor binds the real core normalizer via `normalize` and classifies via
+ * the shared not-found predicate.
+ */
+export const NPM_DESCRIPTOR: RegistryDescriptor = {
+  id: "npm",
+  label: "npm",
+  language: "JavaScript / TypeScript",
+  venue: "server",
+  normalize: normalizeNpmName,
+  classify: (input) => classifyNotFound(input),
+  checkOrigin: "https://registry.npmjs.org",
+  checkUrl: (name, origin = "https://registry.npmjs.org") =>
+    `${origin}/${encodeURIComponent(name)}`,
+  link: (name) => `https://www.npmjs.com/package/${encodeURIComponent(name)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+  rateLimitPerMinute: 60,
+};

@@ -34,9 +34,10 @@ function headersOf(fetchImpl: ReturnType<typeof vi.fn>): Headers {
 }
 
 describe("normalizeHexName", () => {
-  it("lowercases names and allows underscores", () => {
+  it("lowercases names, allows underscores, and collapses whitespace to underscores", () => {
     expect(normalizeHexName("Phoenix")).toEqual({ ok: true, name: "phoenix" });
     expect(normalizeHexName("  my_pkg  ")).toEqual({ ok: true, name: "my_pkg" });
+    expect(normalizeHexName("my pkg")).toEqual({ ok: true, name: "my_pkg" });
   });
 
   it("rejects invalid hex names with reasons", () => {
@@ -44,8 +45,9 @@ describe("normalizeHexName", () => {
       ["", /empty/],
       ["   ", /empty/],
       ["-leading", /start with a letter/],
-      ["has-hyphen", /does not allow/],
-      ["has space", /does not allow/],
+      ["123abc", /start with a letter/],
+      ["has-hyphen", /cannot contain hyphens/],
+      ["has.dot", /does not allow/],
       ["café", /does not allow/],
     ];
     for (const [value, reason] of invalid) {

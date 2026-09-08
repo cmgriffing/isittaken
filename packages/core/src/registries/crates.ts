@@ -2,6 +2,8 @@ import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
 import { lookupPresence } from "./presence.js";
+import { classifyNotFound, isJsonObject } from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface CratesRegistryOptions {
   /** Fixed registry origin; callers cannot override it per request. */
@@ -38,6 +40,11 @@ export function normalizeCratesName(value: string): RegistryValidation {
   return { ok: true, name: collapsed };
 }
 
+/** True for a parsed object body carrying a crates.io `crate` payload. */
+export function hasCratesCrate(json: unknown): boolean {
+  return isJsonObject(json) && "crate" in json;
+}
+
 /**
  * Crates.io registry adapter. Exact venue: 200 with a parseable crate payload
  * is taken, the documented 404 is available, and every ambiguous response is
@@ -63,7 +70,33 @@ export function createCratesRegistry(options: CratesRegistryOptions): PackageReg
         venue: "crates",
         fetch: doFetch,
         clock,
+        async confirmsPresence(response: Response): Promise<boolean> {
+          const payload: unknown = await response.json();
+          return hasCratesCrate(payload);
+        },
       });
     },
   };
 }
+
+/**
+ * crates.io registry descriptor (browser venue: the API serves CORS headers
+ * and expects user traffic). Both the adapter and the descriptor classify via
+ * the shared `hasCratesCrate` shape predicate.
+ */
+export const CRATES_DESCRIPTOR: RegistryDescriptor = {
+  id: "crates",
+  label: "crates.io",
+  language: "Rust",
+  venue: "browser",
+  normalize: normalizeCratesName,
+  classify: (input) =>
+    classifyNotFound(input, {
+      shape: hasCratesCrate,
+    }),
+  checkOrigin: "https://crates.io",
+  checkUrl: (name, origin = "https://crates.io") =>
+    `${origin}/api/v1/crates/${encodeURIComponent(name)}`,
+  link: (name) => `https://crates.io/crates/${encodeURIComponent(name)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+};

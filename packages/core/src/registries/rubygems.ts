@@ -2,6 +2,8 @@ import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
 import { lookupPresence } from "./presence.js";
+import { classifyNotFound } from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface RubygemsRegistryOptions {
   /** Fixed registry origin; callers cannot override it per request. */
@@ -63,3 +65,23 @@ export function createRubygemsRegistry(options: RubygemsRegistryOptions): Packag
     },
   };
 }
+
+/**
+ * RubyGems registry descriptor (server venue). Classification uses the shared
+ * not-found predicate; names preserve case, so the venue's own normalizer is
+ * bound (the generic default would wrongly lowercase).
+ */
+export const RUBYGEMS_DESCRIPTOR: RegistryDescriptor = {
+  id: "rubygems",
+  label: "RubyGems",
+  language: "Ruby",
+  venue: "server",
+  normalize: normalizeRubygemsName,
+  classify: (input) => classifyNotFound(input),
+  checkOrigin: "https://rubygems.org",
+  checkUrl: (name, origin = "https://rubygems.org") =>
+    `${origin}/api/v1/gems/${encodeURIComponent(name)}.json`,
+  link: (name) => `https://rubygems.org/gems/${encodeURIComponent(name)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+  rateLimitPerMinute: 30,
+};

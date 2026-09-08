@@ -70,6 +70,32 @@ export type { VenueId } from "./venues.js";
 export { lookupPresence } from "./registries/presence.js";
 export type { PresenceLookupOptions } from "./registries/presence.js";
 
+// Registry descriptor surface (single source of registry knowledge)
+export type { RegistryVenue, RegistryCacheTtl, RegistryDescriptor } from "./descriptors.js";
+export { REGISTRY_LINEUP, registryById, normalizerFor } from "./descriptors.js";
+
+// Shared classification helpers
+export type { ClassificationStatus, ClassifyInput, RegistryClassification } from "./classify.js";
+export {
+  normalizeRegistryName,
+  DEFAULT_MAX_NAME_LENGTH,
+  isJsonObject,
+  isJsonArray,
+  classifyNotFound,
+  classifyExactMatch,
+} from "./classify.js";
+
+// Registry descriptors
+export { NPM_DESCRIPTOR } from "./registries/npm.js";
+export { PYPI_DESCRIPTOR } from "./registries/pypi.js";
+export { RUBYGEMS_DESCRIPTOR } from "./registries/rubygems.js";
+export { HEX_DESCRIPTOR } from "./registries/hex.js";
+export { MAVEN_DESCRIPTOR } from "./registries/maven.js";
+export { GO_DESCRIPTOR } from "./registries/go.js";
+export { CRATES_DESCRIPTOR, hasCratesCrate } from "./registries/crates.js";
+export { NUGET_DESCRIPTOR, hasNugetVersions } from "./registries/nuget.js";
+export { PACKAGIST_DESCRIPTOR } from "./registries/packagist.js";
+
 // npm registry adapter
 export { createNpmRegistry, normalizeNpmName } from "./registries/npm.js";
 export type { NpmRegistryOptions } from "./registries/npm.js";

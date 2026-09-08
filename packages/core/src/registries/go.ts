@@ -1,6 +1,8 @@
 import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
+import type { ClassifyInput, RegistryClassification } from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface GoRegistryOptions {
   /** pkg.go.dev search origin (bare-word fuzzy lookups). */
@@ -66,6 +68,43 @@ function escapeModulePath(path: string): string {
   return escaped;
 }
 
+/** Extract module-path candidates from a pkg.go.dev search page. */
+function extractModuleCandidates(html: string): string[] {
+  const candidates: string[] = [];
+  const hrefPattern = /href="\/([A-Za-z0-9!._~/-]+)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = hrefPattern.exec(html)) !== null) {
+    const path = match[1];
+    if (!path) continue;
+    const segments = path.split("/");
+    const first = segments[0];
+    if (segments.length >= 2 && first && first.includes(".")) {
+      candidates.push(path);
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Classify a pkg.go.dev search-page response by the shared search rule:
+ * rate limits/blocks and non-200 statuses are honest `unknown`; a 200 whose
+ * module candidates' final segment (case-insensitively) matches the checked
+ * name is taken, otherwise available.
+ */
+export function classifyGoSearch(input: ClassifyInput): RegistryClassification {
+  if (input.status === 429 || input.status === 403) {
+    return { status: "unknown", reason: "pkg.go.dev rate-limited or blocked the request." };
+  }
+  if (input.status !== 200) {
+    return { status: "unknown", reason: `go responded with status ${input.status}.` };
+  }
+  const matched = extractModuleCandidates(input.text).some((candidate) => {
+    const finalSegment = candidate.slice(candidate.lastIndexOf("/") + 1);
+    return finalSegment.toLowerCase() === input.name;
+  });
+  return matched ? { status: "taken" } : { status: "available" };
+}
+
 /**
  * Go adapter. A bare word is a best-effort fuzzy check of the pkg.go.dev
  * search page; a qualified module path is a near-exact proxy lookup. The
@@ -110,27 +149,9 @@ export function createGoRegistry(options: GoRegistryOptions): PackageRegistry {
       };
     }
 
+    let html: string;
     try {
-      const html = await response.text();
-      const candidates = extractModuleCandidates(html);
-      const matched = candidates.some((candidate) => {
-        const finalSegment = candidate.slice(candidate.lastIndexOf("/") + 1);
-        return finalSegment.toLowerCase() === name;
-      });
-      if (matched) {
-        return {
-          status: "taken",
-          checkedAtMs: clock.nowMs(),
-          fuzzy: true,
-          reason: "matched via the pkg.go.dev search page (search may lag the index)",
-        };
-      }
-      return {
-        status: "available",
-        checkedAtMs: clock.nowMs(),
-        fuzzy: true,
-        reason: "not matched on the pkg.go.dev search page (search may lag the index)",
-      };
+      html = await response.text();
     } catch {
       return {
         status: "unknown",
@@ -138,6 +159,35 @@ export function createGoRegistry(options: GoRegistryOptions): PackageRegistry {
         reason: "go returned an ambiguous response.",
       };
     }
+
+    const classification = classifyGoSearch({
+      name,
+      status: response.status,
+      json: null,
+      text: html,
+    });
+    if (classification.status === "taken") {
+      return {
+        status: "taken",
+        checkedAtMs: clock.nowMs(),
+        fuzzy: true,
+        reason: "matched via the pkg.go.dev search page (search may lag the index)",
+      };
+    }
+    if (classification.status === "available") {
+      return {
+        status: "available",
+        checkedAtMs: clock.nowMs(),
+        fuzzy: true,
+        reason: "not matched on the pkg.go.dev search page (search may lag the index)",
+      };
+    }
+    return {
+      status: "unknown",
+      checkedAtMs: clock.nowMs(),
+      fuzzy: true,
+      reason: classification.reason ?? "go returned an ambiguous response.",
+    };
   }
 
   async function lookupQualified(name: string): Promise<RegistryLookupResult> {
@@ -202,19 +252,24 @@ export function createGoRegistry(options: GoRegistryOptions): PackageRegistry {
   };
 }
 
-/** Extract module-path candidates from a pkg.go.dev search page. */
-function extractModuleCandidates(html: string): string[] {
-  const candidates: string[] = [];
-  const hrefPattern = /href="\/([A-Za-z0-9!._~/-]+)"/g;
-  let match: RegExpExecArray | null;
-  while ((match = hrefPattern.exec(html)) !== null) {
-    const path = match[1];
-    if (!path) continue;
-    const segments = path.split("/");
-    const first = segments[0];
-    if (segments.length >= 2 && first && first.includes(".")) {
-      candidates.push(path);
-    }
-  }
-  return candidates;
-}
+/**
+ * Go registry descriptor (server venue). Bare-name checks classify via the
+ * shared `classifyGoSearch` rule; qualified module paths are exact proxy
+ * lookups in the adapter.
+ */
+export const GO_DESCRIPTOR: RegistryDescriptor = {
+  id: "go",
+  label: "Go",
+  language: "Go",
+  venue: "server",
+  // Module paths contain `/` and keep case pre-escape; the generic default
+  // normalizer would reject both.
+  normalize: normalizeGoName,
+  classify: classifyGoSearch,
+  checkOrigin: "https://pkg.go.dev",
+  checkUrl: (name, origin = "https://pkg.go.dev") =>
+    `${origin}/search?q=${encodeURIComponent(name)}`,
+  link: (name) => `https://pkg.go.dev/search?q=${encodeURIComponent(name)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+  rateLimitPerMinute: 20,
+};

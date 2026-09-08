@@ -2,6 +2,8 @@ import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
 import { lookupPresence } from "./presence.js";
+import { classifyNotFound, isJsonArray, isJsonObject } from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface NugetRegistryOptions {
   /** Fixed registry origin; callers cannot override it per request. */
@@ -37,6 +39,11 @@ export function normalizeNugetName(value: string): RegistryValidation {
   return { ok: true, name: collapsed };
 }
 
+/** True for a parsed object body carrying a NuGet `versions` array. */
+export function hasNugetVersions(json: unknown): boolean {
+  return isJsonObject(json) && isJsonArray(json["versions"]);
+}
+
 /**
  * NuGet registry adapter. Exact venue: 200 with a `versions` array is taken,
  * the documented 404 is available, and every ambiguous response is unknown.
@@ -63,13 +70,31 @@ export function createNugetRegistry(options: NugetRegistryOptions): PackageRegis
         clock,
         async confirmsPresence(response: Response): Promise<boolean> {
           const payload: unknown = await response.json();
-          return (
-            typeof payload === "object" &&
-            payload !== null &&
-            Array.isArray((payload as { versions?: unknown }).versions)
-          );
+          return hasNugetVersions(payload);
         },
       });
     },
   };
 }
+
+/**
+ * NuGet registry descriptor (browser venue; the flat container serves CORS).
+ * Both the adapter and the descriptor classify via the shared
+ * `hasNugetVersions` shape predicate.
+ */
+export const NUGET_DESCRIPTOR: RegistryDescriptor = {
+  id: "nuget",
+  label: "NuGet",
+  language: ".NET",
+  venue: "browser",
+  normalize: normalizeNugetName,
+  classify: (input) =>
+    classifyNotFound(input, {
+      shape: hasNugetVersions,
+    }),
+  checkOrigin: "https://api.nuget.org",
+  checkUrl: (name, origin = "https://api.nuget.org") =>
+    `${origin}/v3-flatcontainer/${encodeURIComponent(name.toLowerCase())}/index.json`,
+  link: (name) => `https://www.nuget.org/packages/${encodeURIComponent(name)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+};

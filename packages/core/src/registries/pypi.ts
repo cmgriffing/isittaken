@@ -2,6 +2,8 @@ import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
 import { lookupPresence } from "./presence.js";
+import { classifyNotFound, DEFAULT_MAX_NAME_LENGTH } from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface PypiRegistryOptions {
   /** Fixed registry origin; callers cannot override it per request. */
@@ -17,28 +19,33 @@ export interface PypiRegistryOptions {
 }
 
 /**
- * PyPI (PEP 503) normalization: casefold, then collapse runs of `-`, `_`, and
- * `.` into a single hyphen. Names that could not be published are rejected
- * with a reason.
+ * PyPI (PEP 503) normalization — the upstream rule: lowercase, and runs of
+ * `-`, `_`, `.`, and whitespace collapse to a single hyphen, so "back end"
+ * and "back-end" are the same project. A name must begin and end with a
+ * letter or digit. Names that could not be published are rejected with a
+ * reason.
  */
 export function normalizePypiName(value: string): RegistryValidation {
-  const collapsed = value
+  const name = value
     .trim()
-    .toLowerCase()
-    .replace(/[-_.]+/g, "-");
-  if (collapsed.length === 0) {
+    .replace(/[-_.\s]+/g, "-")
+    .toLowerCase();
+  if (name.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }
-  if (!/^[a-z0-9]/.test(collapsed)) {
-    return { ok: false, reason: "Name must start with a letter or digit." };
+  if (name.length > DEFAULT_MAX_NAME_LENGTH) {
+    return {
+      ok: false,
+      reason: `Name exceeds the ${DEFAULT_MAX_NAME_LENGTH}-character limit.`,
+    };
   }
-  if (!/^[a-z0-9-]+$/.test(collapsed)) {
+  if (!/^[a-z0-9]/.test(name) || !/[a-z0-9]$/.test(name)) {
+    return { ok: false, reason: "PyPI names must begin and end with a letter or digit." };
+  }
+  if (!/^[a-z0-9.-]+$/.test(name)) {
     return { ok: false, reason: "Name contains characters PyPI does not allow." };
   }
-  if (collapsed.startsWith("-") || collapsed.endsWith("-")) {
-    return { ok: false, reason: "Name cannot start or end with a hyphen." };
-  }
-  return { ok: true, name: collapsed };
+  return { ok: true, name };
 }
 
 /**
@@ -70,3 +77,22 @@ export function createPypiRegistry(options: PypiRegistryOptions): PackageRegistr
     },
   };
 }
+
+/**
+ * PyPI registry descriptor (server venue). Names normalize per PEP 503 and
+ * classify via the shared not-found predicate.
+ */
+export const PYPI_DESCRIPTOR: RegistryDescriptor = {
+  id: "pypi",
+  label: "PyPI",
+  language: "Python",
+  venue: "server",
+  normalize: normalizePypiName,
+  classify: (input) => classifyNotFound(input),
+  checkOrigin: "https://pypi.org",
+  checkUrl: (name, origin = "https://pypi.org") =>
+    `${origin}/pypi/${encodeURIComponent(name)}/json`,
+  link: (name) => `https://pypi.org/project/${encodeURIComponent(name)}/`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+  rateLimitPerMinute: 60,
+};

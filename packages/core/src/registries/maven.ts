@@ -1,6 +1,14 @@
 import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
+import {
+  classifyExactMatch,
+  isJsonArray,
+  isJsonObject,
+  type ClassifyInput,
+  type RegistryClassification,
+} from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface MavenRegistryOptions {
   /** Solr search origin (bare-word fuzzy lookups). */
@@ -19,6 +27,39 @@ export interface MavenRegistryOptions {
 
 const BARE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const GROUP_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Extract the `response.docs` array from a Maven solrsearch payload. */
+function mavenDocs(json: Record<string, unknown>): unknown[] | null {
+  const response = json["response"];
+  if (!isJsonObject(response)) return null;
+  const docs = response["docs"];
+  if (!isJsonArray(docs)) return null;
+  return docs;
+}
+
+/** Extract the artifactId (`a`) candidates from a Maven solrsearch payload. */
+function mavenArtifactIds(json: Record<string, unknown>): string[] {
+  const docs = mavenDocs(json);
+  if (!docs) return [];
+  return docs.flatMap((doc) =>
+    isJsonObject(doc) && typeof doc["a"] === "string" ? [doc["a"]] : [],
+  );
+}
+
+/** Classify a Maven solrsearch payload using the shared exact-match rule. */
+function classifyMavenSearch(input: ClassifyInput): RegistryClassification {
+  return classifyExactMatch(input, {
+    candidates: mavenArtifactIds,
+    total: (json) => {
+      if (!mavenDocs(json)) return null;
+      const response = json["response"];
+      if (!isJsonObject(response)) return null;
+      const numFound = response["numFound"];
+      return typeof numFound === "number" ? numFound : null;
+    },
+    retrieved: (json) => mavenDocs(json)?.length ?? 0,
+  });
+}
 
 /**
  * Maven normalization: case-sensitive (artifact and group ids keep case). A
@@ -98,31 +139,9 @@ export function createMavenRegistry(options: MavenRegistryOptions): PackageRegis
       };
     }
 
+    let payload: unknown;
     try {
-      const payload: unknown = await response.json();
-      const docs = (payload as { response?: { docs?: unknown } }).response?.docs;
-      if (!Array.isArray(docs)) {
-        return {
-          status: "unknown",
-          checkedAtMs: clock.nowMs(),
-          reason: "maven returned an ambiguous response.",
-        };
-      }
-      const matched = docs.some((doc) => (doc as { a?: unknown }).a === name);
-      if (matched) {
-        return {
-          status: "taken",
-          checkedAtMs: clock.nowMs(),
-          fuzzy: true,
-          reason: "matched via the Maven Central search index (index may lag the registry)",
-        };
-      }
-      return {
-        status: "available",
-        checkedAtMs: clock.nowMs(),
-        fuzzy: true,
-        reason: "not matched in the Maven Central search index (index may lag the registry)",
-      };
+      payload = await response.json();
     } catch {
       return {
         status: "unknown",
@@ -130,6 +149,35 @@ export function createMavenRegistry(options: MavenRegistryOptions): PackageRegis
         reason: "maven returned an ambiguous response.",
       };
     }
+
+    const classification = classifyMavenSearch({
+      name,
+      status: response.status,
+      json: payload,
+      text: "",
+    });
+    if (classification.status === "taken") {
+      return {
+        status: "taken",
+        checkedAtMs: clock.nowMs(),
+        fuzzy: true,
+        reason: "matched via the Maven Central search index (index may lag the registry)",
+      };
+    }
+    if (classification.status === "available") {
+      return {
+        status: "available",
+        checkedAtMs: clock.nowMs(),
+        fuzzy: true,
+        reason: "not matched in the Maven Central search index (index may lag the registry)",
+      };
+    }
+    return {
+      status: "unknown",
+      checkedAtMs: clock.nowMs(),
+      fuzzy: true,
+      reason: classification.reason ?? "maven returned an ambiguous response.",
+    };
   }
 
   async function lookupQualified(name: string): Promise<RegistryLookupResult> {
@@ -193,3 +241,26 @@ export function createMavenRegistry(options: MavenRegistryOptions): PackageRegis
     },
   };
 }
+
+/**
+ * Maven Central registry descriptor (server venue). Bare-name checks search
+ * by artifactId under any group ("consumer confusion" semantics) via the
+ * shared exact-match classifier; inconclusive (paginated) searches are
+ * unknown. Qualified `group:artifact` checks are exact in the adapter.
+ */
+export const MAVEN_DESCRIPTOR: RegistryDescriptor = {
+  id: "maven",
+  label: "Maven Central",
+  language: "Java",
+  venue: "server",
+  // Coordinates are case-sensitive and use `group:artifact`; the generic
+  // default normalizer would lowercase and reject the colon.
+  normalize: normalizeMavenName,
+  classify: classifyMavenSearch,
+  checkOrigin: "https://search.maven.org",
+  checkUrl: (name, origin = "https://search.maven.org") =>
+    `${origin}/solrsearch/select?q=${encodeURIComponent(`a:${name}`)}`,
+  link: (name) => `https://central.sonatype.com/search?q=${encodeURIComponent(`a:${name}`)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+  rateLimitPerMinute: 30,
+};

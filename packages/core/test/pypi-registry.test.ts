@@ -35,20 +35,22 @@ function headersOf(fetchImpl: ReturnType<typeof vi.fn>): Headers {
 }
 
 describe("normalizePypiName", () => {
-  it("collapses separator runs to a single hyphen (PEP 503)", () => {
+  it("collapses separator runs and whitespace to a single hyphen (PEP 503)", () => {
     expect(normalizePypiName("Fuzzy_Picker")).toEqual({ ok: true, name: "fuzzy-picker" });
     expect(normalizePypiName("a.b-c_d")).toEqual({ ok: true, name: "a-b-c-d" });
     expect(normalizePypiName("  Laser  ")).toEqual({ ok: true, name: "laser" });
+    expect(normalizePypiName("back end")).toEqual({ ok: true, name: "back-end" });
+    expect(normalizePypiName("zope.interface")).toEqual({ ok: true, name: "zope-interface" });
   });
 
   it("rejects invalid pypi names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
       ["   ", /empty/],
-      ["-leading", /start with a letter/],
-      ["trailing-", /start or end with a hyphen/],
-      ["has space", /does not allow/],
-      ["café", /does not allow/],
+      ["-leading", /begin and end with a letter or digit/],
+      ["trailing-", /begin and end with a letter or digit/],
+      ["foo!bar", /does not allow/],
+      ["café", /begin and end with a letter or digit/],
     ];
     for (const [value, reason] of invalid) {
       const result = normalizePypiName(value);

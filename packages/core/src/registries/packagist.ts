@@ -2,6 +2,14 @@ import type { Clock, PackageRegistry, RegistryValidation } from "../ports.js";
 import type { RegistryLookupResult } from "../types.js";
 import { createRegistryFetch, type RegistryFetch } from "../registry-http.js";
 import { lookupPresence } from "./presence.js";
+import {
+  classifyExactMatch,
+  isJsonArray,
+  isJsonObject,
+  type ClassifyInput,
+  type RegistryClassification,
+} from "../classify.js";
+import type { RegistryDescriptor } from "../descriptors.js";
 
 export interface PackagistRegistryOptions {
   /** Search API origin (bare-word fuzzy lookups). */
@@ -19,6 +27,39 @@ export interface PackagistRegistryOptions {
 }
 
 const SEGMENT = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** Extract the `results` array from a Packagist search payload. */
+function packagistResults(json: Record<string, unknown>): unknown[] | null {
+  const results = json["results"];
+  return isJsonArray(results) ? results : null;
+}
+
+/**
+ * Extract the bare name part from each Packagist search result. Names are
+ * `vendor/package`; a bare-name check matches the package part.
+ */
+function packagistNameParts(json: Record<string, unknown>): string[] {
+  const results = packagistResults(json);
+  if (!results) return [];
+  return results.flatMap((result) => {
+    if (!isJsonObject(result) || typeof result["name"] !== "string") return [];
+    const namePart = result["name"].split("/")[1];
+    return namePart ? [namePart] : [];
+  });
+}
+
+/** Classify a Packagist search payload using the shared exact-match rule. */
+function classifyPackagistSearch(input: ClassifyInput): RegistryClassification {
+  return classifyExactMatch(input, {
+    candidates: packagistNameParts,
+    total: (json) => {
+      if (!packagistResults(json)) return null;
+      const total = json["total"];
+      return typeof total === "number" ? total : null;
+    },
+    retrieved: (json) => packagistResults(json)?.length ?? 0,
+  });
+}
 
 /**
  * Packagist normalization: lowercase, spaces are invalid. A bare word is a
@@ -100,36 +141,9 @@ export function createPackagistRegistry(options: PackagistRegistryOptions): Pack
       };
     }
 
+    let payload: unknown;
     try {
-      const payload: unknown = await response.json();
-      const results = (payload as { results?: unknown }).results;
-      if (!Array.isArray(results)) {
-        return {
-          status: "unknown",
-          checkedAtMs: clock.nowMs(),
-          reason: "packagist returned an ambiguous response.",
-        };
-      }
-      const matched = results.some((entry) => {
-        const entryName = (entry as { name?: unknown }).name;
-        if (typeof entryName !== "string") return false;
-        const finalSegment = entryName.slice(entryName.lastIndexOf("/") + 1);
-        return finalSegment.toLowerCase() === name;
-      });
-      if (matched) {
-        return {
-          status: "taken",
-          checkedAtMs: clock.nowMs(),
-          fuzzy: true,
-          reason: "matched via the Packagist search index (search indexes may lag the registry)",
-        };
-      }
-      return {
-        status: "available",
-        checkedAtMs: clock.nowMs(),
-        fuzzy: true,
-        reason: "not matched in the Packagist search index (search indexes may lag the registry)",
-      };
+      payload = await response.json();
     } catch {
       return {
         status: "unknown",
@@ -137,6 +151,35 @@ export function createPackagistRegistry(options: PackagistRegistryOptions): Pack
         reason: "packagist returned an ambiguous response.",
       };
     }
+
+    const classification = classifyPackagistSearch({
+      name,
+      status: response.status,
+      json: payload,
+      text: "",
+    });
+    if (classification.status === "taken") {
+      return {
+        status: "taken",
+        checkedAtMs: clock.nowMs(),
+        fuzzy: true,
+        reason: "matched via the Packagist search index (search indexes may lag the registry)",
+      };
+    }
+    if (classification.status === "available") {
+      return {
+        status: "available",
+        checkedAtMs: clock.nowMs(),
+        fuzzy: true,
+        reason: "not matched in the Packagist search index (search indexes may lag the registry)",
+      };
+    }
+    return {
+      status: "unknown",
+      checkedAtMs: clock.nowMs(),
+      fuzzy: true,
+      reason: classification.reason ?? "packagist returned an ambiguous response.",
+    };
   }
 
   return {
@@ -157,3 +200,25 @@ export function createPackagistRegistry(options: PackagistRegistryOptions): Pack
     },
   };
 }
+
+/**
+ * Packagist registry descriptor (browser venue). Packagist package pages
+ * require a vendor prefix, so bare-name checks run through the shared
+ * exact-match classifier over the search JSON; inconclusive searches are
+ * unknown. Qualified `vendor/name` checks are exact in the adapter.
+ */
+export const PACKAGIST_DESCRIPTOR: RegistryDescriptor = {
+  id: "packagist",
+  label: "Packagist",
+  language: "PHP",
+  venue: "browser",
+  // Qualified `vendor/name` inputs contain `/`; the generic default
+  // normalizer would reject them.
+  normalize: normalizePackagistName,
+  classify: classifyPackagistSearch,
+  checkOrigin: "https://packagist.org",
+  checkUrl: (name, origin = "https://packagist.org") =>
+    `${origin}/search.json?q=${encodeURIComponent(name)}`,
+  link: (name) => `https://packagist.org/?query=${encodeURIComponent(name)}`,
+  cacheTtl: { availableMs: 300_000, takenMs: 86_400_000 },
+};

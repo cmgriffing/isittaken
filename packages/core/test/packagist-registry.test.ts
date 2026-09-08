@@ -97,7 +97,7 @@ describe("createPackagistRegistry bare (fuzzy) lookup", () => {
     );
   });
 
-  it("reports available+fuzzy when no result matches", async () => {
+  it("reports available+fuzzy when no result matches and the set is complete", async () => {
     const fetchImpl = fakeFetch(
       new Response(JSON.stringify({ results: [{ name: "acme/other" }], total: 1 }), {
         status: 200,
@@ -108,6 +108,32 @@ describe("createPackagistRegistry bare (fuzzy) lookup", () => {
       status: "available",
       fuzzy: true,
       reason: /not matched in the Packagist search index/,
+    });
+  });
+
+  it("reports unknown+fuzzy when the search is paginated (total exceeds results)", async () => {
+    const fetchImpl = fakeFetch(
+      new Response(JSON.stringify({ results: [{ name: "acme/other" }], total: 50 }), {
+        status: 200,
+      }),
+    );
+    const result = await createPackagistRegistry(baseOptions({ fetchImpl })).lookup("fuzzy-picker");
+    expect(result).toMatchObject({
+      status: "unknown",
+      fuzzy: true,
+      reason: "inconclusive search results.",
+    });
+  });
+
+  it("reports unknown+fuzzy when the body lacks a trustworthy total", async () => {
+    const fetchImpl = fakeFetch(
+      new Response(JSON.stringify({ results: [{ name: "acme/other" }] }), { status: 200 }),
+    );
+    const result = await createPackagistRegistry(baseOptions({ fetchImpl })).lookup("fuzzy-picker");
+    expect(result).toMatchObject({
+      status: "unknown",
+      fuzzy: true,
+      reason: "inconclusive search results.",
     });
   });
 
