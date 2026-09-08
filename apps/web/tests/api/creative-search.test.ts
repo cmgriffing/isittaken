@@ -100,9 +100,11 @@ describe("POST /api/creative-search", () => {
     expect(response.status).toBe(403);
   });
 
-  it("generates for authenticated users, checks npm, and settles quota", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(new Response("Not Found", { status: 404 }));
-    fetchImpl.mockResolvedValueOnce(openRouterOk(["lazerly", "laser-kit", "Lazerly"]));
+  it("generates for authenticated users and settles quota without registry work", async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (input: string | URL | Request) => {
+      expect(String(input)).toContain("openrouter.ai");
+      return openRouterOk(["lazerly", "laser-kit", "Lazerly"]);
+    });
     const context = await freshCtx({ fetchImpl });
     const handler = createCreativeSearchFunction(context);
     const token = await login(context);
@@ -116,7 +118,7 @@ describe("POST /api/creative-search", () => {
     const body = (await response.json()) as {
       status: string;
       cached: boolean;
-      candidates: { name: string; registryResults: { status: string }[] }[];
+      candidates: { name: string; registryResults: unknown[] }[];
       quota: { burstRemaining: number; periodicRemaining: number };
     };
     expect(body.status).toBe("ok");
@@ -126,8 +128,9 @@ describe("POST /api/creative-search", () => {
     expect(names).toContain("laser-kit");
     // "Lazerly" merged into "lazerly" by normalization: no duplicate name.
     expect(names.filter((n) => n === "lazerly")).toHaveLength(1);
+    // Registry availability is the client's job; discovery returns none.
     for (const candidate of body.candidates) {
-      expect(candidate.registryResults[0]?.status).toBe("available");
+      expect(candidate.registryResults).toEqual([]);
     }
     expect(body.quota.periodicRemaining).toBeLessThan(ctx.config.quota.userPeriodicPerDay);
 
@@ -261,12 +264,11 @@ describe("POST /api/creative-search", () => {
     );
     expect(searchResponse.status).toBe(200);
     const body = (await searchResponse.json()) as {
-      candidates: { name: string; registryResults: { status: string }[] }[];
+      candidates: { name: string }[];
     };
-    const lazerly = body.candidates.find((c) => c.name === "lazerly");
-    // npm was also unreachable via the same failing fetch, so unknown — but
-    // ordinary search still returns results and never fails outright.
-    expect(body.candidates.length).toBeGreaterThanOrEqual(2);
-    expect(lazerly?.registryResults[0]?.status).toBe("unknown");
+    // Ordinary discovery is untouched by the provider failure.
+    const names = body.candidates.map((c) => c.name);
+    expect(names).toContain("laser");
+    expect(names).toContain("lazerly");
   });
 });

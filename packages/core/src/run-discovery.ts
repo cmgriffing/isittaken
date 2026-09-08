@@ -1,8 +1,12 @@
 import { mapWithConcurrency } from "./concurrency.js";
 import type { CandidateSource, Clock, PackageRegistry, RawCandidate } from "./ports.js";
-import type { RegistryLookupResult } from "./types.js";
 import { normalizeAndDedupeCandidates } from "./normalize-candidates.js";
-import type { ComposedCandidate, RegistryResult, SearchResponse, SourceOutcome } from "./types.js";
+import type {
+  RegistryLookupResult,
+  RegistryResult,
+  SearchResponse,
+  SourceOutcome,
+} from "./types.js";
 import type { SearchLimits } from "./validate-search-request.js";
 
 /** Structural input for discovery; `ValidatedSearchRequest` satisfies it. */
@@ -14,21 +18,18 @@ export interface DiscoveryInput {
 
 export interface DiscoveryDeps {
   sources: readonly CandidateSource[];
-  registries: readonly PackageRegistry[];
   clock: { nowMs(): number };
   limits: SearchLimits;
-  /** Max concurrent upstream availability checks per registry. */
-  registryConcurrency: number;
 }
 
 /**
- * Ordinary (non-creative) discovery pipeline:
- *   collect source candidates -> normalize/dedupe -> registry validation ->
- *   bounded-concurrency availability checks -> compose the response.
+ * Candidate-discovery pipeline:
+ *   collect source candidates -> normalize/dedupe -> compose the response.
  *
- * Sources fail independently: a failed source never blocks other candidates.
- * Registry lookups never throw; ambiguity maps to `unknown`. Invalid names
- * are classified without contacting the registry.
+ * Registry availability is intentionally out of scope: the client fans out
+ * per-registry checks against `POST /api/check` and browser-venue endpoints
+ * (see `client-availability`). Sources fail independently; a failed source
+ * never blocks other candidates.
  */
 export async function runDiscovery(
   validated: DiscoveryInput,
@@ -68,23 +69,17 @@ export async function runDiscovery(
     limits: deps.limits,
   });
 
-  const registryResults = await checkCandidatesAcrossRegistries(candidates, {
-    registries: deps.registries,
-    clock: deps.clock,
-    registryConcurrency: deps.registryConcurrency,
-  });
-
-  const composed: ComposedCandidate[] = candidates.map((candidate, index) => ({
-    name: candidate.normalized,
-    provenance: candidate.provenance,
-    registryResults: registryResults[index] ?? [],
-  }));
-
   return {
     seed: validated.seed,
     generatedAtMs: deps.clock.nowMs(),
     sources: sourceOutcomes,
-    candidates: composed,
+    // Registry results are absent at discovery time; the client populates
+    // them as availability checks complete.
+    candidates: candidates.map((candidate) => ({
+      name: candidate.normalized,
+      provenance: candidate.provenance,
+      registryResults: [],
+    })),
   };
 }
 

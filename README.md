@@ -3,11 +3,13 @@
 Honest, multi-registry package-name availability checks — as a web app, a
 CLI for agents, and a shared core library.
 
-Type a seed word on the web app: it collects synonyms and related words
-(Wordnik), optionally invents creative alternatives (OpenRouter, for
-authenticated users), and checks every candidate against npm's registry with
-honest `available | taken | invalid | unknown` classification. `unknown` is
-never presented as available.
+Type a seed word: the app collects synonyms and related words (Wordnik),
+optionally invents creative alternatives (OpenRouter, authenticated users),
+and checks every candidate across the package registries you select — npm,
+PyPI, RubyGems, Hex, Maven Central, and Go (via this site's API), plus
+crates.io, NuGet, Packagist (fetched directly from your browser) — with honest
+`available | taken | invalid | unknown` classification. `unknown` is never
+presented as available.
 
 The CLI (`isittaken check`) checks bare or venue-qualified names across **nine
 registries** — npm, PyPI, crates.io, RubyGems, NuGet, Hex, Maven, Go, and
@@ -112,9 +114,13 @@ the honesty contract). Installable via [skills.sh](https://skills.sh) /
   GitHub OAuth registration, Turso, OpenRouter safeguards, rollback controls.
 - [Scheduled functions](docs/scheduled-functions.md) — pruning shards,
   schedules, and local one-shot invocation.
-- [Search contract](docs/webmcp-contract.md) — the transport-neutral
-  request/response models shared by the HTTP surface (now implemented on top
-  of `@isittaken/core`).
+- [WebMCP tools](docs/webmcp-contract.md) — the browser tool adapter
+  (registered on the home page when the draft `document.modelContext` API is
+  present) with the four tools (`list_registries`, `search_names`,
+  `check_availability`, `batch_check_availability`), their single-flight/
+  abort/selection semantics, and the declared `isittaken:toolprogress`
+  extension, over the transport-neutral request/response models shared by the
+  HTTP surface (implemented on top of `@isittaken/core`).
 
 ## Scope notes
 
@@ -123,8 +129,13 @@ the honesty contract). Installable via [skills.sh](https://skills.sh) /
   explicitly (`invalid` per venue in the CLI).
 - Availability is observed, not guaranteed — each venue remains the
   authority. Verify on the venue before publishing.
-- Every outbound registry request carries an explicit identifying
-  `User-Agent` (crates.io and pkg.go.dev require one).
+- Supported registries: npm, PyPI, RubyGems, Hex, Maven Central, and Go
+  (server venues, checked via this site's API — Go results are fuzzy leads to
+  verify), plus crates.io, NuGet, and Packagist (browser venues, fetched
+  directly from the visitor's browser).
+- Every outbound registry request made by the CLI or the server carries an
+  explicit identifying `User-Agent`; browser-venue direct fetches cannot set
+  one (browsers treat it as a forbidden header).
 
 ## License
 

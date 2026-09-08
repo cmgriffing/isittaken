@@ -7,9 +7,14 @@ export const PROVENANCE_LABELS: Record<string, string> = {
   "injected-creative": "injected idea",
 };
 
+/**
+ * Per-registry status labels. Registry-neutral: the same verdict vocabulary
+ * applies to every registry in the lineup.
+ */
 export const REGISTRY_STATUS_LABELS: Record<string, string> = {
   available: "available",
   taken: "taken",
-  invalid: "invalid npm name",
+  invalid: "invalid name",
   unknown: "unknown — try again",
+  pending: "checking…",
 };

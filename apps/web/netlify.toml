@@ -1,5 +1,8 @@
 [build]
-  command = "pnpm build"
+  # Migrations apply at build time against the deploy context's DATABASE_URL,
+  # before the site builds — a failed migration fails the deploy. The `build`
+  # npm script stays migration-free so local builds never touch the database.
+  command = "pnpm migrate && pnpm build"
   publish = "dist"
 
 [build.environment]

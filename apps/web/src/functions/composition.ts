@@ -10,11 +10,21 @@ import { createCachedNpmRegistry } from "../adapters/npm/cached-registry";
 import { createOpenRouterProvider } from "../adapters/openrouter/provider";
 import { cachePolicyFor } from "../cache-policy";
 import {
+  createHexRegistry,
+  createMavenRegistry,
   createNpmRegistry,
-  type Clock,
+  createPypiRegistry,
+  createRubygemsRegistry,
   type CandidateSource,
+  type Clock,
   type PackageRegistry,
+  type RegistryId,
 } from "@isittaken/core";
+// TEMPORARY (phase 1 merge shim): registry descriptors live here until
+// phase 2 task 2.1 moves the descriptor surface into @isittaken/core and
+// phase 3 re-points these imports; see openspec change
+// merge-main-unify-registries, tasks 2.1/3.1/3.3.
+import { REGISTRY_LINEUP, registryById, type RegistryDescriptor } from "../domain/registries";
 import type {
   CacheRepository,
   CreativeProvider,
@@ -23,7 +33,7 @@ import type {
   SessionRepository,
   UserRepository,
 } from "../ports";
-import type { ServerConfig } from "../config/server";
+import type { ServerConfig, ServerRegistryId } from "../config/server";
 import { createRateLimiter, type RateLimiter } from "../lib/rate-limit";
 import { logger } from "../lib/logger";
 import { APP_VERSION } from "../app-info";
@@ -40,7 +50,12 @@ export interface AppContext {
   users: UserRepository;
   quotas: QuotaRepository;
   wordnikSource: CandidateSource;
-  npmRegistry: PackageRegistry;
+  /** Server-venue registry adapters, keyed by registry id. */
+  serverRegistries: ReadonlyMap<RegistryId, PackageRegistry>;
+  /** Every supported registry descriptor (client metadata included). */
+  registryDescriptors: readonly RegistryDescriptor[];
+  /** Per-(ip, registry) check rate limiters, keyed by registry id. */
+  registryRateLimiters: ReadonlyMap<RegistryId, RateLimiter>;
   openRouterProvider: CreativeProvider;
   searchRateLimiter: RateLimiter;
   creativeRateLimiter: RateLimiter;
@@ -97,21 +112,42 @@ export function createAppContext(
     fetchImpl: overrides.fetchImpl,
   });
 
-  const npmRegistry = createCachedNpmRegistry({
-    registry: createNpmRegistry({
-      origin: config.npm.registryOrigin,
-      timeoutMs: config.npm.timeoutMs,
+  // Server-venue registry adapters are the transport-pure adapters from
+  // @isittaken/core, keyed by the registry lineup (the single source of
+  // truth). The npm venue keeps our cache decorator until the generic web
+  // cache decorator replaces it in phase 3 (task 3.4, key gains the venue-id
+  // prefix); the other server venues run uncached until then.
+  const serverRegistries = new Map<RegistryId, PackageRegistry>();
+  const registryRateLimiters = new Map<RegistryId, RateLimiter>();
+  for (const descriptor of REGISTRY_LINEUP) {
+    if (descriptor.venue !== "server") continue;
+    const settings = config.registries[descriptor.id as ServerRegistryId];
+    const coreRegistry = createServerVenueRegistry(descriptor.id, {
+      origin: settings.origin,
+      timeoutMs: settings.timeoutMs,
       clock,
       version: APP_VERSION,
       repoUrl: REPO_URL,
       fetchImpl: overrides.fetchImpl,
-    }),
-    cache,
-    cachePolicies: {
-      "npm-available": cachePolicyFor("npm-available", config),
-      "npm-taken": cachePolicyFor("npm-taken", config),
-    },
-  });
+    });
+    if (!coreRegistry) continue;
+    const registry =
+      descriptor.id === "npm"
+        ? createCachedNpmRegistry({
+            registry: coreRegistry,
+            cache,
+            cachePolicies: {
+              "npm-available": cachePolicyFor("npm-available", config),
+              "npm-taken": cachePolicyFor("npm-taken", config),
+            },
+          })
+        : coreRegistry;
+    serverRegistries.set(descriptor.id, registry);
+    registryRateLimiters.set(
+      descriptor.id,
+      createRateLimiter({ limit: settings.rateLimitPerMinute, windowMs: 60_000 }),
+    );
+  }
 
   const openRouterProvider = createOpenRouterProvider({
     apiKey: config.openrouter.apiKey,
@@ -133,7 +169,9 @@ export function createAppContext(
     users,
     quotas,
     wordnikSource,
-    npmRegistry,
+    serverRegistries,
+    registryDescriptors: REGISTRY_LINEUP,
+    registryRateLimiters,
     openRouterProvider,
     searchRateLimiter: createRateLimiter({
       limit: config.rateLimit.publicSearchPerMinute,
@@ -144,4 +182,51 @@ export function createAppContext(
       windowMs: 60_000,
     }),
   };
+}
+
+/** Resolve a registry descriptor by id (undefined when unsupported). */
+export function registryDescriptor(id: string): RegistryDescriptor | undefined {
+  return registryById(id);
+}
+
+/**
+ * Build the transport-pure registry adapter for a server-venue registry id
+ * from @isittaken/core. Returns undefined for ids with no core adapter
+ * (the web lineup adds `go` in phase 3). Exported so test contexts mirror
+ * the composition root's construction exactly. Maven splits its origin into
+ * search (bare-word fuzzy) and metadata (qualified exact) endpoints.
+ */
+export function createServerVenueRegistry(
+  id: RegistryId,
+  options: {
+    origin: string;
+    timeoutMs: number;
+    clock: Clock;
+    version: string;
+    repoUrl: string;
+    fetchImpl?: typeof fetch;
+  },
+): PackageRegistry | undefined {
+  switch (id) {
+    case "npm":
+      return createNpmRegistry(options);
+    case "pypi":
+      return createPypiRegistry(options);
+    case "rubygems":
+      return createRubygemsRegistry(options);
+    case "hex":
+      return createHexRegistry(options);
+    case "maven":
+      return createMavenRegistry({
+        searchOrigin: options.origin,
+        metadataOrigin: options.origin,
+        timeoutMs: options.timeoutMs,
+        clock: options.clock,
+        version: options.version,
+        repoUrl: options.repoUrl,
+        fetchImpl: options.fetchImpl,
+      });
+    default:
+      return undefined;
+  }
 }

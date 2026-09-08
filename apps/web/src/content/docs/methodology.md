@@ -17,17 +17,33 @@ All candidates are normalized (trimmed, lowercased, whitespace-collapsed) and
 deduplicated. When several sources produce the same name, the result keeps a
 _set_ of provenance labels.
 
-## npm classification
+## Where checks run
 
-| Result      | Meaning                                                                                      |
-| ----------- | -------------------------------------------------------------------------------------------- |
-| `taken`     | npm returned package metadata for the name.                                                  |
-| `available` | npm returned its documented not-found response for a valid unscoped name.                    |
-| `invalid`   | The name could not be published as an unscoped npm package; we never queried npm for it.     |
-| `unknown`   | Timeout, rate limit, or any response that doesn't prove presence or absence. We never guess. |
+- **Server venue** (npm, PyPI, RubyGems, Hex, Maven Central): your browser
+  asks this site's `/api/check` endpoint, which performs a single upstream
+  lookup per request and caches the verdict briefly. Requests are rate
+  limited per client IP and per registry to stay polite with upstreams.
+- **Browser venue** (crates.io, NuGet, Packagist): your browser fetches the
+  registry's public, CORS-enabled API directly — no server round-trip — so
+  requests come from your own connection. Verdicts are cached in your
+  browser's local storage and revalidated in the background when stale.
 
-Every availability answer includes the time it was checked. "Available" is an
-observation, not a reservation — npm remains the authority on publishing.
+## Availability classification
+
+Every registry maps upstream responses to one of four verdicts:
+
+| Result      | Meaning                                                                                                                                       |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `taken`     | The registry returned metadata proving the name exists (for Maven and Packagist, under any group or vendor).                                  |
+| `available` | The registry returned its documented not-found response for a valid name, or a search-style result set conclusively contained no exact match. |
+| `invalid`   | The name fails the registry's own naming rules; we never queried the registry for it.                                                         |
+| `unknown`   | Timeout, rate limit, or any response that doesn't prove presence or absence. We never guess.                                                  |
+
+Registry-specific normalization applies before checking (for example PyPI
+collapses `foo_bar` and `foo-bar` to the same project per PEP 503). Every
+availability answer includes the time it was checked and the exact name that
+was checked. "Available" is an observation, not a reservation — each registry
+remains the authority on publishing.
 
 ## What we deliberately don't do
 
@@ -35,6 +51,8 @@ observation, not a reservation — npm remains the authority on publishing.
   claimability; scraping or inference would produce lies, so the feature
   doesn't exist here.
 - **No packages-inside-scope search** for the same reason.
+- **No Go (pkg.go.dev) checks.** It has no official JSON search API, and HTML
+  scraping would be both fragile and impolite.
 - **No guaranteed fresh answers.** Results may be cached briefly by source
   policy; available-name results get the shortest freshness window because
   they can become taken at any time.

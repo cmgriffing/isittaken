@@ -8,16 +8,32 @@ import {
   type Clock,
   type RawCandidate,
 } from "@isittaken/core";
+import {
+  logUpstreamError,
+  readUpstreamErrorSnippet,
+  sanitizeUpstreamSnippet,
+} from "../../lib/upstream";
 
 export const WORDNIK_CACHE_VALUE_VERSION = 1;
 
 /** Wordnik relationship types treated as synonyms vs. generally related. */
 export const SYNONYM_RELATIONSHIP_TYPES = ["synonym"] as const;
+/**
+ * Valid Wordnik relationship types (verified against the live API — its
+ * validation rejects the whole request if ANY type is unknown, e.g. the
+ * previously used "part-of"):
+ * antonym, cross-reference, equivalent, etymologically-related-term, form,
+ * has_topic, hypernym, hyponym, inflected-form, primary, related-word,
+ * rhyme, same-context, suggests, synonym, variant, verb-form, verb-stem.
+ * Types with no data for a word are simply omitted from the response.
+ */
 export const RELATED_RELATIONSHIP_TYPES = [
   "same-context",
   "hypernym",
   "hyponym",
-  "part-of",
+  "related-word",
+  "cross-reference",
+  "equivalent",
 ] as const;
 
 const KNOWN_RELATIONSHIP_TYPES: readonly string[] = [
@@ -94,23 +110,36 @@ export function createWordnikSource(options: WordnikSourceOptions): CandidateSou
     }
 
     if (!response.ok) {
+      // Capture the upstream error body (bounded, secret-redacted) so the
+      // log and the operator-facing reason explain *why* — e.g. invalid
+      // API key or bad parameters on a 400.
+      const snippet = await readUpstreamErrorSnippet(response);
+      logUpstreamError("wordnik", response.status, snippet, { seed });
+      const detail = snippet ? `: ${snippet}` : "";
       return {
         status: "unavailable",
         reason:
           response.status === 429
-            ? "Wordnik rate limit exceeded."
-            : `Wordnik responded with status ${response.status}.`,
+            ? `Wordnik rate limit exceeded.${detail}`
+            : `Wordnik responded with status ${response.status}.${detail}`,
       };
     }
 
+    const bodyText = await response.text();
     let payload: unknown;
     try {
-      payload = await response.json();
+      payload = JSON.parse(bodyText) as unknown;
     } catch {
+      const snippet = sanitizeUpstreamSnippet(bodyText);
+      logUpstreamError("wordnik", response.status, snippet || "(non-JSON body)", { seed });
       return { status: "unavailable", reason: "Wordnik returned a non-JSON response." };
     }
 
     if (!Array.isArray(payload)) {
+      logUpstreamError("wordnik", response.status, sanitizeUpstreamSnippet(bodyText), {
+        seed,
+        problem: "unexpected_shape",
+      });
       return { status: "unavailable", reason: "Wordnik response shape was unexpected." };
     }
 

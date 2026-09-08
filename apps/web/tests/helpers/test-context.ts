@@ -7,14 +7,20 @@ import { createCacheRepository } from "../../src/db/repositories/cache-repositor
 import { createWordnikSource } from "../../src/adapters/wordnik/source";
 import { createCachedNpmRegistry } from "../../src/adapters/npm/cached-registry";
 import { createOpenRouterProvider } from "../../src/adapters/openrouter/provider";
+import { createServerVenueRegistry } from "../../src/functions/composition";
 import { LibsqlSessionRepository } from "../../src/db/repositories/session-repository";
 import { LibsqlUserRepository } from "../../src/db/repositories/user-repository";
 import { LibsqlQuotaRepository } from "../../src/db/repositories/quota-repository";
 import { createRateLimiter, type RateLimiter } from "../../src/lib/rate-limit";
 import { cachePolicyFor } from "../../src/cache-policy";
-import { createNpmRegistry } from "@isittaken/core";
+import { type PackageRegistry, type RegistryId } from "@isittaken/core";
+import { REGISTRY_LINEUP } from "../../src/domain/registries";
 import type { AppContext } from "../../src/functions/composition";
-import type { ServerConfig } from "../../src/config/server";
+import type {
+  RegistryRuntimeSettings,
+  ServerConfig,
+  ServerRegistryId,
+} from "../../src/config/server";
 import { loadServerConfig } from "../../src/config/server";
 import type { IdGenerator } from "../../src/ports";
 import { APP_VERSION } from "../../src/app-info";
@@ -25,6 +31,8 @@ export interface TestContextOptions {
   /** Fake upstream fetch shared by all adapters. */
   fetchImpl?: typeof fetch;
   config?: Partial<ServerConfig>;
+  /** Per-registry settings overrides, merged over descriptor defaults. */
+  registrySettings?: Partial<Record<ServerRegistryId, Partial<RegistryRuntimeSettings>>>;
   github?: { clientId: string; clientSecret: string };
   session?: Partial<ServerConfig["session"]>;
   publicSiteUrl?: string;
@@ -48,6 +56,18 @@ export async function createTestContext(
   const config: ServerConfig = {
     ...base,
     ...options.config,
+    registries: {
+      ...base.registries,
+      ...Object.fromEntries(
+        Object.entries(options.registrySettings ?? {}).map(([id, override]) => [
+          id,
+          {
+            ...base.registries[id as ServerRegistryId],
+            ...override,
+          } as RegistryRuntimeSettings,
+        ]),
+      ),
+    } as ServerConfig["registries"],
     github: { ...base.github, ...options.github },
     session: { ...base.session, ...options.session },
     app: { ...base.app, publicSiteUrl: options.publicSiteUrl ?? base.app.publicSiteUrl },
@@ -74,21 +94,42 @@ export async function createTestContext(
     cachePolicy: cachePolicyFor("wordnik", config),
     fetchImpl: options.fetchImpl,
   });
-  const npmRegistry = createCachedNpmRegistry({
-    registry: createNpmRegistry({
-      origin: config.npm.registryOrigin,
-      timeoutMs: config.npm.timeoutMs,
+  // Server-venue adapters mirror the composition root's construction: the
+  // transport-pure @isittaken/core adapters keyed by the registry lineup,
+  // with npm riding through the web cache decorator until phase 3's
+  // generic cache replaces it (task 3.4).
+  const serverRegistries = new Map<RegistryId, PackageRegistry>();
+  const registryRateLimiters = new Map<RegistryId, RateLimiter>();
+  for (const descriptor of REGISTRY_LINEUP) {
+    if (descriptor.venue !== "server") continue;
+    const settings = config.registries[descriptor.id as ServerRegistryId];
+    const registry = createServerVenueRegistry(descriptor.id, {
+      origin: settings.origin,
+      timeoutMs: settings.timeoutMs,
       clock,
       version: APP_VERSION,
       repoUrl: REPO_URL,
       fetchImpl: options.fetchImpl,
-    }),
-    cache,
-    cachePolicies: {
-      "npm-available": cachePolicyFor("npm-available", config),
-      "npm-taken": cachePolicyFor("npm-taken", config),
-    },
-  });
+    });
+    if (!registry) continue;
+    serverRegistries.set(
+      descriptor.id,
+      descriptor.id === "npm"
+        ? createCachedNpmRegistry({
+            registry,
+            cache,
+            cachePolicies: {
+              "npm-available": cachePolicyFor("npm-available", config),
+              "npm-taken": cachePolicyFor("npm-taken", config),
+            },
+          })
+        : registry,
+    );
+    registryRateLimiters.set(
+      descriptor.id,
+      createRateLimiter({ limit: settings.rateLimitPerMinute, windowMs: 60_000 }),
+    );
+  }
 
   const openRouterProvider = createOpenRouterProvider({
     apiKey: config.openrouter.apiKey ?? "test-openrouter-key",
@@ -110,7 +151,9 @@ export async function createTestContext(
     users: new LibsqlUserRepository(db, ids),
     quotas: new LibsqlQuotaRepository(db),
     wordnikSource,
-    npmRegistry,
+    serverRegistries,
+    registryDescriptors: REGISTRY_LINEUP,
+    registryRateLimiters,
     openRouterProvider,
     searchRateLimiter: createRateLimiter({
       limit: options.rateLimits?.searchPerMinute ?? config.rateLimit.publicSearchPerMinute,

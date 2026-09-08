@@ -3,14 +3,18 @@ import type { ServerConfig } from "./config/server";
 
 /**
  * Source-specific cache policies. Freshness and retention are configured
- * independently; npm-available entries get the shortest freshness because an
- * available name can become taken at any moment.
+ * independently; registry-available entries get the shortest freshness
+ * because an available name can become taken at any moment. Registry verdicts
+ * carry their own per-entry TTL at write time (from the descriptor or its
+ * per-registry override), so these policies are the generic fallback.
  */
 const RETENTION_MULTIPLIER: Record<CacheFamily, number> = {
   wordnik: 4,
   openrouter: 4,
   "npm-available": 12,
   "npm-taken": 7,
+  "registry-available": 12,
+  "registry-taken": 7,
 };
 
 export function cachePolicyFor(family: CacheFamily, config: ServerConfig): CacheWritePolicy {
@@ -21,15 +25,28 @@ export function cachePolicyFor(family: CacheFamily, config: ServerConfig): Cache
   };
 }
 
+/** Retention window for a custom freshness TTL (per-registry overrides). */
+export function retentionFor(family: CacheFamily, freshForMs: number): number {
+  return freshForMs * RETENTION_MULTIPLIER[family];
+}
+
 export function freshFor(family: CacheFamily, config: ServerConfig): number {
   switch (family) {
     case "wordnik":
       return config.cache.ttl.wordnikMs;
     case "openrouter":
       return config.cache.ttl.openrouterMs;
+    case "registry-available":
+      return config.cache.ttl.registryAvailableMs;
+    case "registry-taken":
+      return config.cache.ttl.registryTakenMs;
+    // The npm-only families ride on the retired npm cache decorator
+    // (phase 3, task 3.4) whose policies are supplied explicitly, so
+    // nothing composes these from configuration anymore; npm's documented
+    // TTLs (5 min available / 24 h taken) match the generic registry ones.
     case "npm-available":
-      return config.cache.ttl.npmAvailableMs;
+      return config.cache.ttl.registryAvailableMs;
     case "npm-taken":
-      return config.cache.ttl.npmTakenMs;
+      return config.cache.ttl.registryTakenMs;
   }
 }

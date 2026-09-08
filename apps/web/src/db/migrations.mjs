@@ -4,6 +4,24 @@
  *
  * Timestamps are UTC epoch milliseconds everywhere.
  *
+ * ## Migration contract (additive-only)
+ *
+ * Every migration in this list MUST be pure additive, idempotent DDL:
+ * `CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`, nullable
+ * columns, or new rows. Never drop, rename, or tighten constraints on
+ * existing structures in the same deploy that ships code depending on a new
+ * shape — use the expand/contract two-deploy rule instead: deploy N adds the
+ * new shape (and backfills idempotently, or not at all); deploy N+1, only
+ * after no deployed code reads the old shape, removes it.
+ *
+ * Two properties depend on this contract:
+ * - Build-time migrations (`pnpm migrate && pnpm build` in netlify.toml)
+ *   apply the schema ahead of the code, which is only safe because old code
+ *   never reads what a migration creates.
+ * - Concurrent runners (overlapping builds, cold-start self-heal) tolerate
+ *   losing a race by re-reading `_migrations` and continuing; that tolerance
+ *   is only safe because re-executing a migration's SQL is benign.
+ *
  * @typedef {{ version: number, name: string, sql: string }} Migration
  * @type {Migration[]}
  */

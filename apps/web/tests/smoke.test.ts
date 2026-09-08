@@ -38,4 +38,16 @@ describe("application shell", () => {
       expect(pkg.scripts?.[script], `script: ${script}`).toBeTruthy();
     }
   });
+
+  it("runs migrations during the Netlify build and keeps local builds database-free", () => {
+    const toml = readFileSync(fileURLToPath(new URL("../netlify.toml", import.meta.url)), "utf8");
+    const command = /command\s*=\s*"([^"]+)"/.exec(toml)?.[1];
+    // The deploy is the migration gate: migrate before build, in netlify.toml only.
+    expect(command).toBe("pnpm migrate && pnpm build");
+
+    const pkg = JSON.parse(
+      readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+    ) as { scripts?: Record<string, string> };
+    expect(pkg.scripts?.build, "local build script must not migrate").not.toContain("migrate");
+  });
 });

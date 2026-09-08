@@ -11,7 +11,29 @@ export interface IdGenerator {
   newId(): string;
 }
 
-export type CacheFamily = "wordnik" | "openrouter" | "npm-available" | "npm-taken";
+// Transport ports re-exported from @isittaken/core (temporary alias until the
+// web client re-pointing in phase 3 removes the need for it).
+export type {
+  RawCandidate,
+  CandidateSourceResult,
+  CandidateSource,
+  RegistryValidation,
+  PackageRegistry,
+} from "@isittaken/core";
+
+/**
+ * Generic registry cache families carry the registry id in the cache key and
+ * the verdict in the cached value; per-verdict freshness TTLs are applied at
+ * write time (see `CacheWritePolicy`). The npm-specific families remain until
+ * the npm-only cached-registry decorator is retired (phase 3).
+ */
+export type CacheFamily =
+  | "wordnik"
+  | "openrouter"
+  | "npm-available"
+  | "npm-taken"
+  | "registry-available"
+  | "registry-taken";
 
 export type CacheRead =
   | { status: "fresh"; valueJson: string }
