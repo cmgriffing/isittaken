@@ -97,6 +97,27 @@ describe("createAvailabilityService", () => {
     expect(cells[0]).toMatchObject({ registry: "crates", status: "taken" });
   });
 
+  it("sends no user-agent on browser-venue direct fetches, only accept json", async () => {
+    const fetchImpl = fakeFetch((url, init) => {
+      expect(url).toBe("https://crates.io/api/v1/crates/laser");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("user-agent")).toBeNull();
+      expect(headers.get("accept")).toBe("application/json");
+      return new Response("Not Found", { status: 404 });
+    });
+    const { cells, onResult } = collect();
+    const service = createAvailabilityService({
+      registries: [CRATES_DESCRIPTOR],
+      onResult,
+      now: () => NOW,
+      fetchImpl,
+      cache: new VerdictCache({ store: memoryStore(), ttlFor: ttlFor(CRATES_DESCRIPTOR) }),
+    });
+
+    await service.checkCandidates([{ name: "laser" }]);
+    expect(cells[0]).toMatchObject({ registry: "crates", status: "available" });
+  });
+
   it("dedupes candidates that normalize to the same registry name", async () => {
     const fetchImpl = fakeFetch((url) =>
       url.includes("/api/check")

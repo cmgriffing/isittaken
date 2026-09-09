@@ -1,7 +1,8 @@
 # Deployment Checklist — isittaken
 
-Recorded from the full verification run (`pnpm verify`) on 2026-08-30. The web
-app lives in `apps/web/`; run every command below from `apps/web`.
+Recorded from the phase-5 final verification run of `merge-main-unify-registries`
+(2026-09-09). The web app lives in `apps/web/`; run every command below from
+`apps/web`.
 
 | Check                                           | Command                                                    | Outcome                                                                                               |
 | ----------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -9,7 +10,7 @@ app lives in `apps/web/`; run every command below from `apps/web`.
 | Formatting                                      | `pnpm format:check`                                        | PASS                                                                                                  |
 | Astro check                                     | `pnpm astro check`                                         | PASS (0 errors, 0 warnings)                                                                           |
 | Type check                                      | `pnpm typecheck`                                           | PASS (strict TS, `noUncheckedIndexedAccess`)                                                          |
-| Unit / adapter / API / contract / journey tests | `pnpm test`                                                | PASS — 118 passed, 1 skipped (opt-in Turso contract)                                                  |
+| Unit / adapter / API / contract / journey tests | `pnpm test`                                                | PASS — 199 passed, 1 skipped (opt-in Turso contract)                                                  |
 | Browser tests (static build + hydration)        | `pnpm test:browser`                                        | PASS — 11/11                                                                                          |
 | Local SQLite migrations                         | `pnpm migrate`                                             | PASS — version 1 `init-core-tables` applied, idempotent on re-run                                     |
 | Scheduled-function one-shot invocation          | `pnpm vitest run tests/scheduled/local-invocation.test.ts` | PASS — all 4 shards, second pass idempotent                                                           |
