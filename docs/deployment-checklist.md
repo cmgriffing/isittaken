@@ -1,4 +1,4 @@
-# Deployment Checklist — build-package-name-finder
+# Deployment Checklist — isittaken
 
 Recorded from the full verification run (`pnpm verify`) on 2026-08-30. The web
 app lives in `apps/web/`; run every command below from `apps/web`.
@@ -10,10 +10,10 @@ app lives in `apps/web/`; run every command below from `apps/web`.
 | Astro check                                     | `pnpm astro check`                                         | PASS (0 errors, 0 warnings)                                                                           |
 | Type check                                      | `pnpm typecheck`                                           | PASS (strict TS, `noUncheckedIndexedAccess`)                                                          |
 | Unit / adapter / API / contract / journey tests | `pnpm test`                                                | PASS — 118 passed, 1 skipped (opt-in Turso contract)                                                  |
-| Browser tests (static build + hydration)        | `pnpm test:browser`                                        | PASS — 6/6                                                                                            |
+| Browser tests (static build + hydration)        | `pnpm test:browser`                                        | PASS — 11/11                                                                                          |
 | Local SQLite migrations                         | `pnpm migrate`                                             | PASS — version 1 `init-core-tables` applied, idempotent on re-run                                     |
 | Scheduled-function one-shot invocation          | `pnpm vitest run tests/scheduled/local-invocation.test.ts` | PASS — all 4 shards, second pass idempotent                                                           |
-| Production build shape                          | `node scripts/verify-production-build.mjs`                 | PASS — 5 static pages, hashed assets, **no SSR handler**, 10 standalone Functions, `/api/*` redirects |
+| Production build shape                          | `node scripts/verify-production-build.mjs`                 | PASS — 5 static pages, hashed assets, **no SSR handler**, 11 standalone Functions, `/api/*` redirects |
 
 ## Pre-deploy actions (environment-specific)
 

@@ -52,6 +52,7 @@ const functionsDir = join(root, "netlify/functions");
 const required = [
   "search.ts",
   "creative-search.ts",
+  "check.ts",
   "auth-github-start.ts",
   "auth-github-callback.ts",
   "auth-session.ts",
@@ -70,6 +71,7 @@ ok(`all ${required.length} standalone Functions present in netlify/functions`);
 const expectedPaths = {
   "search.ts": "/api/search",
   "creative-search.ts": "/api/creative-search",
+  "check.ts": "/api/check",
   "auth-github-start.ts": "/api/auth/github/start",
   "auth-github-callback.ts": "/api/auth/github/callback",
   "auth-session.ts": "/api/auth/session",

@@ -19,7 +19,7 @@ agents alike.
 ## Repository layout (pnpm + Turborepo workspace)
 
 ```
-apps/web      # Astro + Netlify web app (the original app, behavior unchanged)
+apps/web      # Astro + Netlify web app — search, availability, WebMCP
 apps/cli      # `isittaken` CLI — `check` command across nine venues
 packages/core # @isittaken/core — transport-neutral availability domain
 skills/       # AI Skills (skills.sh) teaching agents how to use the CLI
@@ -33,8 +33,8 @@ docs/         # deployment, scheduled functions, and the search contract
   that stamps every upstream request with an explicit
   `User-Agent: isittaken/<version> (+<repo-url>)`.
 - **`apps/web`** composes the core with web-only capabilities (Wordnik,
-  OpenRouter creative generation, quota, sessions, npm result caching) behind
-  its `/api/*` Netlify Functions.
+  OpenRouter creative generation, quota, sessions, server-venue result
+  caching) behind its `/api/*` Netlify Functions.
 - **`apps/cli`** composes the core with raw name arguments — no keys, no
   config, no web machinery.
 

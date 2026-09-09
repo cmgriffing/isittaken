@@ -2,7 +2,7 @@
 
 The application's core operations are callable without HTTP. Today the
 Netlify Functions translate JSON requests into the models below; the
-browser WebMCP adapter (`src/lib/client/webmcp/`) maps tool arguments to the
+browser WebMCP adapter (`apps/web/src/lib/client/webmcp/`) maps tool arguments to the
 _same_ models and maps tool results back from them, without duplicating
 validation, provenance, deduplication, or availability rules.
 
@@ -121,9 +121,9 @@ provenance, and deduplication as HTTP requests.
 The models and use case live in the shared, transport-neutral
 `packages/core` package (`@isittaken/core`) — also consumed by the `isittaken`
 CLI — and the web app imports them from there. The web client iterates the
-core descriptor lineup through a small web-side filter
-(`apps/web/src/lib/client/web-lineup.ts`) that excludes `go` until it is
-restored as a server venue on the web (task 3.6).
+core's nine-venue `REGISTRY_LINEUP` directly (no web-side filter); `go` is
+included as a server venue via `/api/check`, with its fuzzy results presented
+as leads to verify.
 
 ## Discovery response model
 
