@@ -18,3 +18,9 @@ export const REGISTRY_STATUS_LABELS: Record<string, string> = {
   unknown: "unknown — try again",
   pending: "checking…",
 };
+
+/**
+ * Label for fuzzy verdicts (search-API matches on maven/go/packagist). These
+ * are leads to verify before relying on them, not definitive answers.
+ */
+export const FUZZY_LABEL = "fuzzy — verify before relying";

@@ -101,6 +101,7 @@ export function createCheckFunction(ctx: AppContext): (request: Request) => Prom
           name: validation.name,
           checkedAtMs: result.checkedAtMs,
           ...(result.reason ? { reason: result.reason } : {}),
+          ...(result.fuzzy ? { fuzzy: true } : {}),
         },
         200,
       );

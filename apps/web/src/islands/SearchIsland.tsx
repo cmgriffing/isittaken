@@ -1,14 +1,11 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ComposedCandidate, RegistryId, SearchResponse } from "@isittaken/core";
-// TEMPORARY (phase 1 merge shim): descriptors re-point to @isittaken/core in
-// phase 3 (task 3.1) when the descriptor surface moves into core.
-import { REGISTRY_LINEUP } from "../domain/registries";
-import type { RegistryDescriptor } from "../domain/registries";
+import { REGISTRY_LINEUP, type RegistryDescriptor } from "@isittaken/core";
 import type { VerdictCell } from "../lib/client/availability";
 import type { SearchStore, SearchState } from "../lib/client/search-store";
 import { getSearchStore } from "../lib/client/search-store";
 import { fetchSession, type CreativeOk, type SessionState } from "../lib/client/api";
-import { PROVENANCE_LABELS, REGISTRY_STATUS_LABELS } from "../lib/client/labels";
+import { PROVENANCE_LABELS, REGISTRY_STATUS_LABELS, FUZZY_LABEL } from "../lib/client/labels";
 import GitHubSignIn from "./GitHubSignIn";
 
 interface Props {
@@ -286,6 +283,10 @@ export function Results(props: {
         “Available” = not found at check time — not a publishing guarantee.{" "}
         <a href="/docs/methodology">See methodology.</a>
       </p>
+      <p class="hint">
+        A <span class="fuzzy-chip">fuzzy — verify before relying</span> result is a search-API lead
+        (Go, Maven, Packagist), not a definitive answer — confirm on the registry before publishing.
+      </p>
     </div>
   );
 }
@@ -375,6 +376,11 @@ function RegistryResultItem(props: {
       <span class={`status-pill status-${status}`}>
         {status === "pending" ? "checking…" : (REGISTRY_STATUS_LABELS[status] ?? status)}
       </span>
+      {cell?.fuzzy && (
+        <span class="fuzzy-chip" title={FUZZY_LABEL}>
+          {FUZZY_LABEL}
+        </span>
+      )}
       {cell?.cached && <span class="cached-chip">cached</span>}
       {checkedAsDiffers && (
         <span class="hint">

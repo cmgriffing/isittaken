@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/pr
 import { h } from "preact";
 import SearchIsland, { Results } from "../../src/islands/SearchIsland";
 import type { SearchResponse } from "@isittaken/core";
-import type { RegistryDescriptor } from "../../src/domain/registries";
+import type { RegistryDescriptor } from "@isittaken/core";
 import type { VerdictCell } from "../../src/lib/client/availability";
 import { VERDICT_CACHE_STORAGE_KEY } from "../../src/lib/client/verdict-cache";
 import { resetSearchStoreForTests } from "../../src/lib/client/search-store";
@@ -108,16 +108,16 @@ describe("SearchIsland", () => {
     typeSeedAndSubmit(seed);
 
     await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
-    // Server-venue checks via /api/check (npm + pypi + rubygems + hex + maven)
+    // Server-venue checks via /api/check (npm + pypi + rubygems + hex + maven + go)
     // and browser-venue checks via direct fetches (crates + nuget + packagist).
     await waitFor(() => {
       const apiCalls = fetchImpl.mock.calls.filter(([u]) => String(u).includes("/api/check"));
-      expect(apiCalls.length).toBeGreaterThanOrEqual(8); // 2 candidates x 4+ server registries
+      expect(apiCalls.length).toBeGreaterThanOrEqual(12); // 2 candidates x 6 server registries
     });
 
-    // Ratio for "laser": available on npm, rubygems, hex, maven, nuget,
-    // packagist; taken on pypi and crates -> 6/8.
-    await waitFor(() => expect(screen.getAllByText("6/8").length).toBeGreaterThan(0));
+    // Ratio for "laser": available on npm, rubygems, hex, maven, go, nuget,
+    // packagist; taken on pypi and crates -> 7/9.
+    await waitFor(() => expect(screen.getAllByText("7/9").length).toBeGreaterThan(0));
     expect(screen.getAllByText(/not a publishing guarantee/i).length).toBeGreaterThan(0);
   });
 
@@ -132,6 +132,7 @@ describe("SearchIsland", () => {
       "RubyGems",
       "Hex",
       "Maven Central",
+      "Go",
       "crates.io",
       "NuGet",
       "Packagist",
@@ -277,10 +278,50 @@ describe("SearchIsland", () => {
     render(h(SearchIsland, null));
     typeSeedAndSubmit(seed);
 
-    await waitFor(() => expect(screen.getAllByText("0/8").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("0/9").length).toBeGreaterThan(0));
     fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0] as Element);
     await waitFor(() => {
       expect(screen.getAllByText(/unknown — try again/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("renders a fuzzy go verdict as a lead to verify before relying", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/api/search")) {
+          return new Response(JSON.stringify(searchResponse()), { status: 200 });
+        }
+        if (url.includes("/api/check")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as { registry?: string };
+          if (body.registry === "go") {
+            return new Response(
+              JSON.stringify({
+                status: "taken",
+                name: "laser",
+                checkedAtMs: Date.now(),
+                fuzzy: true,
+                reason: "matched via the pkg.go.dev search page (search may lag the index)",
+              }),
+              { status: 200 },
+            );
+          }
+          return new Response(
+            JSON.stringify({ status: "available", name: "laser", checkedAtMs: Date.now() }),
+            { status: 200 },
+          );
+        }
+        return new Response("slow down", { status: 429 });
+      });
+    vi.stubGlobal("fetch", fetchImpl);
+    render(h(SearchIsland, null));
+    typeSeedAndSubmit(seed);
+
+    await waitFor(() => expect(screen.getByText("Names for “laser”")).toBeTruthy());
+    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0] as Element);
+    await waitFor(() => {
+      expect(screen.getAllByText(/fuzzy — verify before relying/).length).toBeGreaterThan(0);
     });
   });
 

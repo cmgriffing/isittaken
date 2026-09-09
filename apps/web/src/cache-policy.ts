@@ -11,8 +11,6 @@ import type { ServerConfig } from "./config/server";
 const RETENTION_MULTIPLIER: Record<CacheFamily, number> = {
   wordnik: 4,
   openrouter: 4,
-  "npm-available": 12,
-  "npm-taken": 7,
   "registry-available": 12,
   "registry-taken": 7,
 };
@@ -39,14 +37,6 @@ export function freshFor(family: CacheFamily, config: ServerConfig): number {
     case "registry-available":
       return config.cache.ttl.registryAvailableMs;
     case "registry-taken":
-      return config.cache.ttl.registryTakenMs;
-    // The npm-only families ride on the retired npm cache decorator
-    // (phase 3, task 3.4) whose policies are supplied explicitly, so
-    // nothing composes these from configuration anymore; npm's documented
-    // TTLs (5 min available / 24 h taken) match the generic registry ones.
-    case "npm-available":
-      return config.cache.ttl.registryAvailableMs;
-    case "npm-taken":
       return config.cache.ttl.registryTakenMs;
   }
 }

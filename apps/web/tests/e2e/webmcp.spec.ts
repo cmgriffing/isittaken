@@ -123,6 +123,7 @@ test.describe("webmcp tools", () => {
       "rubygems",
       "hex",
       "maven",
+      "go",
       "crates",
       "nuget",
       "packagist",

@@ -121,9 +121,9 @@ test.describe("search island (hydrated)", () => {
     await page.keyboard.press("Enter");
 
     await expect(page.getByText("Names for “laser”")).toBeVisible();
-    // Progressive ratio: every selected registry answered (7 available for
-    // "laser" — npm/optics is the single taken — over 8 selected).
-    await expect(page.getByText("7/8").first()).toBeVisible();
+    // Progressive ratio: every selected registry answered (8 available for
+    // "optics" — npm/optics is the single taken — over 9 selected).
+    await expect(page.getByText("8/9").first()).toBeVisible();
     await expect(page.getByText(/not a publishing guarantee/i)).toBeVisible();
 
     // Expanding the optics row shows the taken pill and the npm link.

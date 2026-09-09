@@ -4,9 +4,7 @@ import {
   type RegistryStatus,
   type SearchLimits,
 } from "@isittaken/core";
-// TEMPORARY (phase 1 merge shim): descriptors move into @isittaken/core in
-// phase 2 (task 2.1); this import re-points then (phase 3, task 3.1).
-import { REGISTRY_LINEUP } from "../../../domain/registries";
+import { REGISTRY_LINEUP } from "@isittaken/core";
 import type { VerdictCell } from "../availability";
 import { getSearchStore, type SearchStore } from "../search-store";
 
@@ -71,7 +69,7 @@ export const TOOL_SEARCH_LIMITS: Readonly<SearchLimits> = SEARCH_LIMITS;
 const BATCH_DESCRIPTION =
   "Check package-name availability for a batch of candidates across selected registries, driving the visible results grid live. " +
   "Runs ONE batch at a time per page: while a batch is in flight, a concurrent call is refused immediately with batch_in_progress (wait or abort your pending call). " +
-  "A batch may take several seconds to complete (network checks across up to 8 registries per candidate). " +
+  "A batch may take several seconds to complete (network checks across up to 9 registries per candidate). " +
   "Input: seed (required), optional injectedSynonyms / injectedCreatives (your own alternative names; they consume no AI quota), and optional registries (array of registry ids that will exactly replace the selection the human sees on the page — omit to use the current selection). " +
   "Resolves with per-candidate, per-registry verdicts plus selectionUsed when the fan-out completes.";
 
@@ -507,7 +505,7 @@ export function createWebMcpAdapter(options: CreateWebMcpAdapterOptions = {}): W
             registries: {
               type: "array",
               items: { type: "string" },
-              maxItems: 8,
+              maxItems: 9,
               description:
                 "Registry ids that will exactly replace the visible on-page selection (unknown ids are refused and reported). Omit to use the current selection.",
             },

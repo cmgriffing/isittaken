@@ -8,7 +8,7 @@ description: What Is It Taken is and what it is not.
 A small, honest tool for naming things. Give it a seed word and it gathers
 synonyms, related words, and (optionally) AI-generated alternatives, then
 checks each candidate against the package registries you select: npm, PyPI,
-RubyGems, Hex, Maven Central, crates.io, NuGet, and Packagist.
+RubyGems, Hex, Maven Central, Go, crates.io, NuGet, and Packagist.
 
 ## What this is not
 
@@ -27,8 +27,9 @@ RubyGems, Hex, Maven Central, crates.io, NuGet, and Packagist.
 - [Wordnik](https://developer.wordnik.com) — synonyms and related words.
 - [npm registry](https://registry.npmjs.org), [PyPI](https://pypi.org),
   [RubyGems](https://rubygems.org), [Hex](https://hex.pm),
-  [Maven Central](https://central.sonatype.com) — checked through their
-  documented JSON APIs.
+  [Maven Central](https://central.sonatype.com), [Go](https://pkg.go.dev) —
+  checked through this site's `/api/check` endpoint (Go results are fuzzy
+  leads to verify, since pkg.go.dev has no official JSON search API).
 - [crates.io](https://crates.io), [NuGet](https://api.nuget.org),
   [Packagist](https://packagist.org) — fetched directly from your browser via
   their CORS-enabled public APIs.

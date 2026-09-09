@@ -169,6 +169,7 @@ describe("list_registries", () => {
       "rubygems",
       "hex",
       "maven",
+      "go",
       "crates",
       "nuget",
       "packagist",
@@ -365,6 +366,7 @@ describe("batch_check_availability", () => {
     store.toggleRegistry("rubygems", false);
     store.toggleRegistry("hex", false);
     store.toggleRegistry("maven", false);
+    store.toggleRegistry("go", false);
     store.toggleRegistry("crates", false);
     store.toggleRegistry("nuget", false);
     store.toggleRegistry("packagist", false);

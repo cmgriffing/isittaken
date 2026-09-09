@@ -1,8 +1,5 @@
 import type { RegistryId, RegistryStatus } from "@isittaken/core";
-// TEMPORARY (phase 1 merge shim): descriptors move into @isittaken/core in
-// phase 2 (task 2.1); this import re-points then (phase 3, task 3.1).
-import type { RegistryDescriptor } from "../../domain/registries";
-import { normalizerFor } from "../../domain/registries";
+import { normalizerFor, type RegistryDescriptor } from "@isittaken/core";
 import { VerdictCache } from "./verdict-cache";
 
 /**
@@ -31,6 +28,8 @@ export interface VerdictCell {
   reason?: string;
   /** True while the painted verdict came from a stale cache entry. */
   cached?: boolean;
+  /** True when the verdict is a fuzzy lead (search-API match) to verify. */
+  fuzzy?: boolean;
 }
 
 export interface CheckOutcome {
@@ -39,6 +38,8 @@ export interface CheckOutcome {
   reason?: string;
   /** Retryable rate limit: reschedule after `retryAfterSeconds`. */
   rateLimited?: { retryAfterSeconds: number };
+  /** Fuzzy venues flag their results as leads to verify before relying. */
+  fuzzy?: boolean;
 }
 
 export interface AvailabilityServiceOptions {
@@ -95,11 +96,13 @@ async function checkViaApi(
       status: RegistryStatus;
       checkedAtMs: number;
       reason?: string;
+      fuzzy?: boolean;
     };
     return {
       status: body.status,
       checkedAtMs: body.checkedAtMs,
       ...(body.reason ? { reason: body.reason } : {}),
+      ...(body.fuzzy ? { fuzzy: true } : {}),
     };
   } catch {
     return {
@@ -263,6 +266,7 @@ export function createAvailabilityService(options: AvailabilityServiceOptions) {
       status: outcome.status,
       checkedAtMs: outcome.checkedAtMs,
       ...(outcome.reason ? { reason: outcome.reason } : {}),
+      ...(outcome.fuzzy ? { fuzzy: true } : {}),
       cached,
     });
   }

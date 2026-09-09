@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { registryById } from "../domain/registries";
+import { registryById } from "@isittaken/core";
 
 /**
  * Server-only configuration. This module is loaded exclusively by server-side
@@ -10,7 +10,7 @@ import { registryById } from "../domain/registries";
  */
 
 /** Registry ids that run their availability checks server-side. */
-const SERVER_REGISTRY_IDS = ["npm", "pypi", "rubygems", "hex", "maven"] as const;
+const SERVER_REGISTRY_IDS = ["npm", "pypi", "rubygems", "hex", "maven", "go"] as const;
 
 export type ServerRegistryId = (typeof SERVER_REGISTRY_IDS)[number];
 
@@ -24,6 +24,8 @@ const DEFAULT_REGISTRY_RATE_LIMIT_PER_MINUTE = 30;
 export interface RegistryRuntimeSettings {
   /** Upstream origin for the check endpoint (tests/ops may override). */
   origin: string;
+  /** Secondary origin for venues that split search vs exact endpoints (go). */
+  proxyOrigin?: string;
   timeoutMs: number;
   rateLimitPerMinute: number;
   availableTtlMs: number;
@@ -60,7 +62,7 @@ const registryEnvShape: Record<string, z.ZodTypeAny> = Object.fromEntries(
     const descriptor = registryById(id);
     if (!descriptor) throw new Error(`No registry descriptor for id ${id}.`);
     const prefix = `REGISTRY_${id.toUpperCase()}_`;
-    return [
+    const shape: [string, z.ZodTypeAny][] = [
       [`${prefix}ORIGIN`, urlWithDefault(descriptor.checkOrigin)],
       [`${prefix}TIMEOUT_MS`, int(DEFAULT_REGISTRY_TIMEOUT_MS)],
       [
@@ -69,7 +71,13 @@ const registryEnvShape: Record<string, z.ZodTypeAny> = Object.fromEntries(
       ],
       [`${prefix}AVAILABLE_TTL_MS`, int(descriptor.cacheTtl.availableMs)],
       [`${prefix}TAKEN_TTL_MS`, int(descriptor.cacheTtl.takenMs)],
-    ] as const;
+    ];
+    // go splits its check into a search origin (pkg.go.dev) and a module
+    // proxy origin (qualified exact lookups); expose the proxy as an override.
+    if (id === "go") {
+      shape.push([`${prefix}PROXY_ORIGIN`, urlWithDefault("https://proxy.golang.org")]);
+    }
+    return shape;
   }),
 );
 
@@ -230,6 +238,7 @@ export function loadServerConfig(
       const env = parsed as unknown as Record<string, string | number | undefined>;
       const settings: RegistryRuntimeSettings = {
         origin: env[`${prefix}ORIGIN`] as string,
+        ...(id === "go" ? { proxyOrigin: env[`${prefix}PROXY_ORIGIN`] as string } : {}),
         timeoutMs: env[`${prefix}TIMEOUT_MS`] as number,
         rateLimitPerMinute: env[`${prefix}RATE_LIMIT_PER_MINUTE`] as number,
         availableTtlMs: env[`${prefix}AVAILABLE_TTL_MS`] as number,

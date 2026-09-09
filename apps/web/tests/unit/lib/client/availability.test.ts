@@ -9,8 +9,8 @@ import {
   NPM_DESCRIPTOR,
   PYPI_DESCRIPTOR,
   CRATES_DESCRIPTOR,
-} from "../../../../src/domain/registries";
-import type { RegistryDescriptor } from "../../../../src/domain/registries";
+  type RegistryDescriptor,
+} from "@isittaken/core";
 
 const NOW = 1_700_000_000_000;
 

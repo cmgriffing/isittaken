@@ -1,8 +1,5 @@
 import type { ComposedCandidate, RegistryId, SearchResponse } from "@isittaken/core";
-// TEMPORARY (phase 1 merge shim): descriptors move into @isittaken/core in
-// phase 2 (task 2.1); these imports re-point then (phase 3, task 3.1).
-import { REGISTRY_LINEUP, registryById } from "../../domain/registries";
-import type { RegistryDescriptor } from "../../domain/registries";
+import { REGISTRY_LINEUP, registryById, type RegistryDescriptor } from "@isittaken/core";
 import {
   createAvailabilityService,
   type AvailabilityService,

@@ -19,14 +19,20 @@ _set_ of provenance labels.
 
 ## Where checks run
 
-- **Server venue** (npm, PyPI, RubyGems, Hex, Maven Central): your browser
-  asks this site's `/api/check` endpoint, which performs a single upstream
-  lookup per request and caches the verdict briefly. Requests are rate
-  limited per client IP and per registry to stay polite with upstreams.
+- **Server venue** (npm, PyPI, RubyGems, Hex, Maven Central, Go): your
+  browser asks this site's `/api/check` endpoint, which performs a single
+  upstream lookup per request and caches the verdict briefly. Requests are
+  rate limited per client IP and per registry to stay polite with upstreams.
 - **Browser venue** (crates.io, NuGet, Packagist): your browser fetches the
   registry's public, CORS-enabled API directly — no server round-trip — so
   requests come from your own connection. Verdicts are cached in your
   browser's local storage and revalidated in the background when stale.
+
+Go has no official JSON search API, so its bare-word results come from the
+pkg.go.dev search page and are flagged as **fuzzy leads to verify** — never
+definitive. If pkg.go.dev blocks or rate-limits the request, the result is an
+honest `unknown`, never `available`. A full module path (e.g.
+`github.com/x/y`) is checked exactly against the Go module proxy instead.
 
 ## Availability classification
 
@@ -51,8 +57,6 @@ remains the authority on publishing.
   claimability; scraping or inference would produce lies, so the feature
   doesn't exist here.
 - **No packages-inside-scope search** for the same reason.
-- **No Go (pkg.go.dev) checks.** It has no official JSON search API, and HTML
-  scraping would be both fragile and impolite.
 - **No guaranteed fresh answers.** Results may be cached briefly by source
   policy; available-name results get the shortest freshness window because
   they can become taken at any time.

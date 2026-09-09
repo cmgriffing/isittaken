@@ -120,8 +120,10 @@ provenance, and deduplication as HTTP requests.
 
 The models and use case live in the shared, transport-neutral
 `packages/core` package (`@isittaken/core`) — also consumed by the `isittaken`
-CLI — and the web app imports them from there (the web descriptor lineup is a
-temporary web-side module until the descriptor surface lands in core).
+CLI — and the web app imports them from there. The web client iterates the
+core descriptor lineup through a small web-side filter
+(`apps/web/src/lib/client/web-lineup.ts`) that excludes `go` until it is
+restored as a server venue on the web (task 3.6).
 
 ## Discovery response model
 
@@ -153,8 +155,8 @@ const verdict = await registry.lookup(validation.name); // one upstream lookup
 
 `POST /api/check { word, registry }` is a thin shell over exactly this.
 Registry ids and their metadata (labels, links, venues) come from the shared
-descriptor lineup in `src/domain/registries` — the same client-safe module
-the `list_registries` tool exposes.
+descriptor lineup in `@isittaken/core` — the same client-safe surface the
+`list_registries` tool exposes.
 
 ```ts
 interface CheckResponse {
@@ -163,12 +165,12 @@ interface CheckResponse {
   checkedAtMs: number;
   reason?: string;
   fuzzy?: boolean; // optional; multi-venue fuzzy-capable venues only.
-  // The web app checks npm only (an exact venue), so web API responses
-  // never carry this flag — the HTTP contract is observably unchanged.
+  // Fuzzy-capable server venues (maven, go) set this on search-API matches;
+  // exact venues (npm, pypi, rubygems, hex) never do.
 }
 ```
 
-Server-venue registries (npm, pypi, rubygems, hex, maven) are checked this
+Server-venue registries (npm, pypi, rubygems, hex, maven, go) are checked this
 way; browser-venue registries (crates, nuget, packagist) refuse `/api/check`
 and are fetched directly from their CORS-enabled public endpoints.
 

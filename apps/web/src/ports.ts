@@ -24,16 +24,10 @@ export type {
 /**
  * Generic registry cache families carry the registry id in the cache key and
  * the verdict in the cached value; per-verdict freshness TTLs are applied at
- * write time (see `CacheWritePolicy`). The npm-specific families remain until
- * the npm-only cached-registry decorator is retired (phase 3).
+ * write time (see `CacheWritePolicy`). All server-venue registries share the
+ * two generic `registry-*` families.
  */
-export type CacheFamily =
-  | "wordnik"
-  | "openrouter"
-  | "npm-available"
-  | "npm-taken"
-  | "registry-available"
-  | "registry-taken";
+export type CacheFamily = "wordnik" | "openrouter" | "registry-available" | "registry-taken";
 
 export type CacheRead =
   | { status: "fresh"; valueJson: string }

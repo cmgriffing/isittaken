@@ -25,6 +25,14 @@ describe("loadServerConfig", () => {
     expect("crates" in config.registries).toBe(false);
   });
 
+  it("resolves go as a server venue with its descriptor rate limit and proxy origin", () => {
+    const config = loadServerConfig(baseEnv);
+    expect(config.registries.go.origin).toBe("https://pkg.go.dev");
+    expect(config.registries.go.proxyOrigin).toBe("https://proxy.golang.org");
+    expect(config.registries.go.rateLimitPerMinute).toBe(20);
+    expect(config.registries.go.timeoutMs).toBe(4000);
+  });
+
   it("treats empty-string environment values as unset", () => {
     const config = loadServerConfig({ WORDNIK_API_KEY: "  ", NODE_ENV: "development" });
     expect(config.wordnik.apiKey).toBeUndefined();

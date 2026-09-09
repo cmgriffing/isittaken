@@ -5,7 +5,7 @@ import { createClient, type Client } from "@libsql/client";
 import { ensureMigrated } from "../../src/db/migrate";
 import { createCacheRepository } from "../../src/db/repositories/cache-repository";
 import { createWordnikSource } from "../../src/adapters/wordnik/source";
-import { createCachedNpmRegistry } from "../../src/adapters/npm/cached-registry";
+import { createCachedRegistry } from "../../src/adapters/registries/cached-registry";
 import { createOpenRouterProvider } from "../../src/adapters/openrouter/provider";
 import { createServerVenueRegistry } from "../../src/functions/composition";
 import { LibsqlSessionRepository } from "../../src/db/repositories/session-repository";
@@ -14,7 +14,7 @@ import { LibsqlQuotaRepository } from "../../src/db/repositories/quota-repositor
 import { createRateLimiter, type RateLimiter } from "../../src/lib/rate-limit";
 import { cachePolicyFor } from "../../src/cache-policy";
 import { type PackageRegistry, type RegistryId } from "@isittaken/core";
-import { REGISTRY_LINEUP } from "../../src/domain/registries";
+import { REGISTRY_LINEUP } from "@isittaken/core";
 import type { AppContext } from "../../src/functions/composition";
 import type {
   RegistryRuntimeSettings,
@@ -96,8 +96,7 @@ export async function createTestContext(
   });
   // Server-venue adapters mirror the composition root's construction: the
   // transport-pure @isittaken/core adapters keyed by the registry lineup,
-  // with npm riding through the web cache decorator until phase 3's
-  // generic cache replaces it (task 3.4).
+  // with every server venue riding the generic web cache decorator (task 3.4).
   const serverRegistries = new Map<RegistryId, PackageRegistry>();
   const registryRateLimiters = new Map<RegistryId, RateLimiter>();
   for (const descriptor of REGISTRY_LINEUP) {
@@ -105,6 +104,7 @@ export async function createTestContext(
     const settings = config.registries[descriptor.id as ServerRegistryId];
     const registry = createServerVenueRegistry(descriptor.id, {
       origin: settings.origin,
+      proxyOrigin: settings.proxyOrigin,
       timeoutMs: settings.timeoutMs,
       clock,
       version: APP_VERSION,
@@ -114,16 +114,14 @@ export async function createTestContext(
     if (!registry) continue;
     serverRegistries.set(
       descriptor.id,
-      descriptor.id === "npm"
-        ? createCachedNpmRegistry({
-            registry,
-            cache,
-            cachePolicies: {
-              "npm-available": cachePolicyFor("npm-available", config),
-              "npm-taken": cachePolicyFor("npm-taken", config),
-            },
-          })
-        : registry,
+      createCachedRegistry({
+        registry,
+        cache,
+        cachePolicies: {
+          available: cachePolicyFor("registry-available", config),
+          taken: cachePolicyFor("registry-taken", config),
+        },
+      }),
     );
     registryRateLimiters.set(
       descriptor.id,

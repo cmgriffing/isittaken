@@ -493,6 +493,14 @@ form > label {
   font-family: var(--font-mono);
   font-size: 0.75rem;
 }
+.fuzzy-chip {
+  background: var(--color-paper);
+  border: 2px solid var(--color-unknown);
+  color: var(--color-ink);
+  padding: 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
 .registry-results {
   list-style: none;
   margin: var(--space-3) 0 0;

@@ -6,10 +6,11 @@ import { LibsqlSessionRepository } from "../db/repositories/session-repository";
 import { LibsqlUserRepository } from "../db/repositories/user-repository";
 import { LibsqlQuotaRepository } from "../db/repositories/quota-repository";
 import { createWordnikSource } from "../adapters/wordnik/source";
-import { createCachedNpmRegistry } from "../adapters/npm/cached-registry";
+import { createCachedRegistry } from "../adapters/registries/cached-registry";
 import { createOpenRouterProvider } from "../adapters/openrouter/provider";
 import { cachePolicyFor } from "../cache-policy";
 import {
+  createGoRegistry,
   createHexRegistry,
   createMavenRegistry,
   createNpmRegistry,
@@ -20,11 +21,7 @@ import {
   type PackageRegistry,
   type RegistryId,
 } from "@isittaken/core";
-// TEMPORARY (phase 1 merge shim): registry descriptors live here until
-// phase 2 task 2.1 moves the descriptor surface into @isittaken/core and
-// phase 3 re-points these imports; see openspec change
-// merge-main-unify-registries, tasks 2.1/3.1/3.3.
-import { REGISTRY_LINEUP, registryById, type RegistryDescriptor } from "../domain/registries";
+import { REGISTRY_LINEUP, registryById, type RegistryDescriptor } from "@isittaken/core";
 import type {
   CacheRepository,
   CreativeProvider,
@@ -114,9 +111,10 @@ export function createAppContext(
 
   // Server-venue registry adapters are the transport-pure adapters from
   // @isittaken/core, keyed by the registry lineup (the single source of
-  // truth). The npm venue keeps our cache decorator until the generic web
-  // cache decorator replaces it in phase 3 (task 3.4, key gains the venue-id
-  // prefix); the other server venues run uncached until then.
+  // truth). Every server venue rides the generic web cache decorator
+  // (decision D5: caching is a web concern; core stays cache-free). The
+  // per-verdict TTLs come from the generic registry-* cache policy, which
+  // mirrors the venue descriptors' cacheTtl (5 min available / 24 h taken).
   const serverRegistries = new Map<RegistryId, PackageRegistry>();
   const registryRateLimiters = new Map<RegistryId, RateLimiter>();
   for (const descriptor of REGISTRY_LINEUP) {
@@ -124,6 +122,7 @@ export function createAppContext(
     const settings = config.registries[descriptor.id as ServerRegistryId];
     const coreRegistry = createServerVenueRegistry(descriptor.id, {
       origin: settings.origin,
+      proxyOrigin: settings.proxyOrigin,
       timeoutMs: settings.timeoutMs,
       clock,
       version: APP_VERSION,
@@ -131,18 +130,17 @@ export function createAppContext(
       fetchImpl: overrides.fetchImpl,
     });
     if (!coreRegistry) continue;
-    const registry =
-      descriptor.id === "npm"
-        ? createCachedNpmRegistry({
-            registry: coreRegistry,
-            cache,
-            cachePolicies: {
-              "npm-available": cachePolicyFor("npm-available", config),
-              "npm-taken": cachePolicyFor("npm-taken", config),
-            },
-          })
-        : coreRegistry;
-    serverRegistries.set(descriptor.id, registry);
+    serverRegistries.set(
+      descriptor.id,
+      createCachedRegistry({
+        registry: coreRegistry,
+        cache,
+        cachePolicies: {
+          available: cachePolicyFor("registry-available", config),
+          taken: cachePolicyFor("registry-taken", config),
+        },
+      }),
+    );
     registryRateLimiters.set(
       descriptor.id,
       createRateLimiter({ limit: settings.rateLimitPerMinute, windowMs: 60_000 }),
@@ -191,15 +189,17 @@ export function registryDescriptor(id: string): RegistryDescriptor | undefined {
 
 /**
  * Build the transport-pure registry adapter for a server-venue registry id
- * from @isittaken/core. Returns undefined for ids with no core adapter
- * (the web lineup adds `go` in phase 3). Exported so test contexts mirror
- * the composition root's construction exactly. Maven splits its origin into
- * search (bare-word fuzzy) and metadata (qualified exact) endpoints.
+ * from @isittaken/core. Returns undefined for ids with no core adapter.
+ * Exported so test contexts mirror the composition root's construction
+ * exactly. Maven splits its origin into search (bare-word fuzzy) and
+ * metadata (qualified exact) endpoints; go splits into search (pkg.go.dev)
+ * and module-proxy (qualified exact) endpoints.
  */
 export function createServerVenueRegistry(
   id: RegistryId,
   options: {
     origin: string;
+    proxyOrigin?: string;
     timeoutMs: number;
     clock: Clock;
     version: string;
@@ -220,6 +220,16 @@ export function createServerVenueRegistry(
       return createMavenRegistry({
         searchOrigin: options.origin,
         metadataOrigin: options.origin,
+        timeoutMs: options.timeoutMs,
+        clock: options.clock,
+        version: options.version,
+        repoUrl: options.repoUrl,
+        fetchImpl: options.fetchImpl,
+      });
+    case "go":
+      return createGoRegistry({
+        searchOrigin: options.origin,
+        proxyOrigin: options.proxyOrigin ?? "https://proxy.golang.org",
         timeoutMs: options.timeoutMs,
         clock: options.clock,
         version: options.version,
