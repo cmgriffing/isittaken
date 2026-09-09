@@ -4,12 +4,12 @@ Four scheduled Netlify Functions own disjoint maintenance work. Every shard
 is idempotent, runs in bounded deterministic batches, and stops before
 Netlify's 30-second execution limit (20s work budget + safety margin).
 
-| Function                   | Schedule (UTC)             | Owns                                                  |
-| -------------------------- | -------------------------- | ----------------------------------------------------- |
-| `prune-availability-cache` | `@hourly`                  | `cache_entries` families `npm-available`, `npm-taken` |
-| `prune-language-cache`     | daily 03:17 (`17 3 * * *`) | `cache_entries` family `wordnik`                      |
-| `prune-ai-cache`           | daily 04:23 (`23 4 * * *`) | `cache_entries` family `openrouter`                   |
-| `prune-auth-data`          | daily 05:41 (`41 5 * * *`) | expired `sessions`, obsolete `ai_usage_buckets`       |
+| Function                   | Schedule (UTC)             | Owns                                                            |
+| -------------------------- | -------------------------- | --------------------------------------------------------------- |
+| `prune-availability-cache` | `@hourly`                  | `cache_entries` families `registry-available`, `registry-taken` |
+| `prune-language-cache`     | daily 03:17 (`17 3 * * *`) | `cache_entries` family `wordnik`                                |
+| `prune-ai-cache`           | daily 04:23 (`23 4 * * *`) | `cache_entries` family `openrouter`                             |
+| `prune-auth-data`          | daily 05:41 (`41 5 * * *`) | expired `sessions`, obsolete `ai_usage_buckets`                 |
 
 Pruning is storage hygiene only: cache reads always enforce `fresh_until`
 against the request clock, so delayed or skipped pruning never causes a
@@ -25,7 +25,8 @@ manually with the one-shot flow below, then re-enable one shard at a time.
 ## Local one-shot invocation
 
 The shards run against whatever `DATABASE_URL` the environment provides; with
-no configuration they use the local SQLite file `file:./local.db`.
+no configuration they use the local SQLite file `file:./local.db`. Run these
+commands from `apps/web/`.
 
 ```bash
 # 1. Local SQLite migrations

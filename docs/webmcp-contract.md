@@ -2,7 +2,7 @@
 
 The application's core operations are callable without HTTP. Today the
 Netlify Functions translate JSON requests into the models below; the
-browser WebMCP adapter (`src/lib/client/webmcp/`) maps tool arguments to the
+browser WebMCP adapter (`apps/web/src/lib/client/webmcp/`) maps tool arguments to the
 _same_ models and maps tool results back from them, without duplicating
 validation, provenance, deduplication, or availability rules.
 
@@ -118,6 +118,13 @@ The HTTP `/api/search` handler calls exactly this function; the WebMCP
 limits; injected candidates follow the same limits,
 provenance, and deduplication as HTTP requests.
 
+The models and use case live in the shared, transport-neutral
+`packages/core` package (`@isittaken/core`) — also consumed by the `isittaken`
+CLI — and the web app imports them from there. The web client iterates the
+core's nine-venue `REGISTRY_LINEUP` directly (no web-side filter); `go` is
+included as a server venue via `/api/check`, with its fuzzy results presented
+as leads to verify.
+
 ## Discovery response model
 
 ```ts
@@ -148,8 +155,8 @@ const verdict = await registry.lookup(validation.name); // one upstream lookup
 
 `POST /api/check { word, registry }` is a thin shell over exactly this.
 Registry ids and their metadata (labels, links, venues) come from the shared
-descriptor lineup in `src/domain/registries` — the same client-safe module
-the `list_registries` tool exposes.
+descriptor lineup in `@isittaken/core` — the same client-safe surface the
+`list_registries` tool exposes.
 
 ```ts
 interface CheckResponse {
@@ -157,10 +164,13 @@ interface CheckResponse {
   name: string; // registry-normalized name checked (or rejected)
   checkedAtMs: number;
   reason?: string;
+  fuzzy?: boolean; // optional; multi-venue fuzzy-capable venues only.
+  // Fuzzy-capable server venues (maven, go) set this on search-API matches;
+  // exact venues (npm, pypi, rubygems, hex) never do.
 }
 ```
 
-Server-venue registries (npm, pypi, rubygems, hex, maven) are checked this
+Server-venue registries (npm, pypi, rubygems, hex, maven, go) are checked this
 way; browser-venue registries (crates, nuget, packagist) refuse `/api/check`
 and are fetched directly from their CORS-enabled public endpoints.
 

@@ -1,0 +1,9 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Allow postinstall build scripts for packages that need them (astro build
+# relies on esbuild; sharp is used for image processing).
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
