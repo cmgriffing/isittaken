@@ -22,12 +22,19 @@ export interface NpmRegistryOptions {
 
 /**
  * npm unscoped-name normalization and validation. Whitespace runs collapse to
- * hyphens so multiword suggestions become plausible package names. Names that
- * could not be published unscoped are rejected with a reason; scoped names
- * are explicitly unsupported.
+ * hyphens so multiword suggestions become plausible package names; consecutive
+ * same-separator runs (`--`, `__`) collapse to one because npm permits the run
+ * form (URL-safe charset, no run rule), so verdicts reflect the canonical
+ * spelling instead of a typo-squat neighbor. Names that could not be published
+ * unscoped are rejected with a reason; scoped names are explicitly unsupported.
  */
 export function normalizeNpmName(value: string): RegistryValidation {
-  const collapsed = value.trim().replace(/\s+/g, "-").toLowerCase();
+  const collapsed = value
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/_{2,}/g, "_")
+    .toLowerCase();
   if (collapsed.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }

@@ -19,12 +19,17 @@ export interface CratesRegistryOptions {
 }
 
 /**
- * Crates.io normalization: underscores and hyphens denote the same crate, so
- * underscores are canonicalized to hyphens. Names that could not be published
- * are rejected with a reason.
+ * Crates.io normalization: crates.io itself declares `_` and `-` equivalent
+ * and canonicalizes to the hyphen spelling, so the whole separator class
+ * (`-`, `_`, whitespace runs) collapses to a single hyphen — mirroring the
+ * spirit of PEP 503. Names that could not be published are rejected with a
+ * reason.
  */
 export function normalizeCratesName(value: string): RegistryValidation {
-  const collapsed = value.trim().toLowerCase().replace(/_/g, "-");
+  const collapsed = value
+    .trim()
+    .toLowerCase()
+    .replace(/[-_\s]+/g, "-");
   if (collapsed.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }

@@ -26,6 +26,17 @@ describe("normalizeNpmName", () => {
     expect(normalizeNpmName("pkg.js_v2")).toEqual({ ok: true, name: "pkg.js_v2" });
   });
 
+  it("collapses whitespace and same-separator runs; keeps mixed separators literal", () => {
+    expect(normalizeNpmName("my cool app")).toEqual({ ok: true, name: "my-cool-app" });
+    expect(normalizeNpmName("foo--bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeNpmName("foo__bar")).toEqual({ ok: true, name: "foo_bar" });
+    expect(normalizeNpmName("foo---bar")).toEqual({ ok: true, name: "foo-bar" });
+    // npm is per-character: adjacent separators are legal and stay literal
+    expect(normalizeNpmName("foo_-bar")).toEqual({ ok: true, name: "foo_-bar" });
+    // dots stay literal (interior)
+    expect(normalizeNpmName("pkg.js_v2")).toEqual({ ok: true, name: "pkg.js_v2" });
+  });
+
   it("rejects invalid npm names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],

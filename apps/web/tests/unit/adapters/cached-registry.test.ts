@@ -279,9 +279,10 @@ describe("cached server-venue adapter behaviors", () => {
       read: vi.fn().mockResolvedValue({ status: "miss" }),
       write: vi.fn(),
     });
-    // RubyGems normalization is trim-only (case preserved); whitespace is invalid.
+    // RubyGems normalization is case-preserving; whitespace collapses to the
+    // canonical hyphen (venue-name-normalization).
     expect(registry.validate("Back-End")).toEqual({ ok: true, name: "Back-End" });
-    expect(registry.validate("Back End").ok).toBe(false);
+    expect(registry.validate("Back End")).toEqual({ ok: true, name: "Back-End" });
     await registry.lookup("back-end");
     expect(fetchImpl).toHaveBeenCalledWith(
       "https://rubygems.test/api/v1/gems/back-end.json",

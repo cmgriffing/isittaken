@@ -26,7 +26,43 @@ export interface PackagistRegistryOptions {
   userAgent?: string;
 }
 
-const SEGMENT = /^[a-z0-9][a-z0-9._-]*$/;
+const VENDOR_SEGMENT = /^[a-z0-9](?:[_.-]?[a-z0-9]+)*$/;
+const NAME_SEGMENT = /^[a-z0-9](?:[_.-]?[a-z0-9]+)*$/;
+
+/**
+ * Collapse a run of exactly two hyphens to one. Upstream (composer schema)
+ * permits at most two consecutive hyphens in the name segment, so the run
+ * form is legal-but-confusable: collapsing it checks the canonical spelling.
+ * Three or more hyphens are illegal upstream and are rejected instead.
+ * Returns null when the segment must be classified invalid.
+ */
+function collapseNameSegment(segment: string): string | null {
+  if (/-{3,}/.test(segment)) return null;
+  return segment.replace(/-{2}/g, "-");
+}
+
+/** Build the specific invalid reason for a segment that failed its pattern. */
+function segmentRejection(segment: string, kind: "vendor" | "name"): RegistryValidation {
+  if (!/^[a-z0-9._-]+$/.test(segment)) {
+    return { ok: false, reason: "Name contains characters Packagist does not allow." };
+  }
+  if (/^[-._]/.test(segment) || /[-._]$/.test(segment)) {
+    return {
+      ok: false,
+      reason:
+        kind === "vendor"
+          ? "Vendor names cannot begin or end with a separator."
+          : "Names cannot begin or end with a separator.",
+    };
+  }
+  return {
+    ok: false,
+    reason:
+      kind === "vendor"
+        ? "Vendor names allow only single `.`/`-`/`_` separators."
+        : "Names allow only single `.`/`_` separators or at most two hyphens.",
+  };
+}
 
 /** Extract the `results` array from a Packagist search payload. */
 function packagistResults(json: Record<string, unknown>): unknown[] | null {
@@ -62,16 +98,21 @@ function classifyPackagistSearch(input: ClassifyInput): RegistryClassification {
 }
 
 /**
- * Packagist normalization: lowercase, spaces are invalid. A bare word is a
- * search term; `vendor/name` (exactly one slash) is a qualified package.
+ * Packagist normalization: lowercase; whitespace runs collapse to the
+ * canonical `-`. Upstream rules come from the composer schema name pattern
+ * (vendor `[a-z0-9]([_.-]?[a-z0-9]+)*`, name
+ * `[a-z0-9](([_.]|-{1,2})?[a-z0-9]+)*`): vendor segments allow only single
+ * `.`/`-`/`_` separators, name segments additionally allow up to two
+ * consecutive hyphens — so exactly `--` collapses to `-` for squat-resistance,
+ * while `_`/`.` runs, adjacent separators, trailing separators, and
+ * triple-hyphens can never be published and are rejected locally instead (a
+ * network check would 404 into a false "available"). A bare word is a search
+ * term; `vendor/name` (exactly one slash) is a qualified package.
  */
 export function normalizePackagistName(value: string): RegistryValidation {
-  const collapsed = value.trim().toLowerCase();
+  const collapsed = value.trim().toLowerCase().replace(/\s+/g, "-");
   if (collapsed.length === 0) {
     return { ok: false, reason: "Name is empty." };
-  }
-  if (collapsed.includes(" ")) {
-    return { ok: false, reason: "Name cannot contain spaces." };
   }
   const segments = collapsed.split("/");
   if (segments.length > 2) {
@@ -82,21 +123,20 @@ export function normalizePackagistName(value: string): RegistryValidation {
     if (!vendor || !name) {
       return { ok: false, reason: "Packagist names are vendor/name." };
     }
-    if (!SEGMENT.test(vendor) || !SEGMENT.test(name)) {
-      return { ok: false, reason: "Name contains characters Packagist does not allow." };
+    if (!VENDOR_SEGMENT.test(vendor)) {
+      return segmentRejection(vendor, "vendor");
     }
-    if (vendor.endsWith("-") || name.endsWith("-")) {
-      return { ok: false, reason: "Segments cannot end with a hyphen." };
+    const collapsedName = collapseNameSegment(name);
+    if (collapsedName === null || !NAME_SEGMENT.test(collapsedName)) {
+      return segmentRejection(name, "name");
     }
-    return { ok: true, name: collapsed };
+    return { ok: true, name: `${vendor}/${collapsedName}` };
   }
-  if (!SEGMENT.test(collapsed)) {
-    return { ok: false, reason: "Name contains characters Packagist does not allow." };
+  const collapsedName = collapseNameSegment(segments[0] ?? "");
+  if (collapsedName === null || !NAME_SEGMENT.test(collapsedName)) {
+    return segmentRejection(segments[0] ?? "", "name");
   }
-  if (collapsed.endsWith("-")) {
-    return { ok: false, reason: "Name cannot end with a hyphen." };
-  }
-  return { ok: true, name: collapsed };
+  return { ok: true, name: collapsedName };
 }
 
 /**

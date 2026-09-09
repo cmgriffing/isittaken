@@ -43,6 +43,23 @@ describe("normalizeMavenName", () => {
     });
   });
 
+  it("collapses whitespace and separator runs per segment (case preserved, dots literal)", () => {
+    expect(normalizeMavenName("my cool app")).toEqual({ ok: true, name: "my-cool-app" });
+    expect(normalizeMavenName("foo--bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeMavenName("foo__bar")).toEqual({ ok: true, name: "foo_bar" });
+    expect(normalizeMavenName("My Cool App")).toEqual({ ok: true, name: "My-Cool-App" });
+    expect(normalizeMavenName("foo bar:baz qux")).toEqual({ ok: true, name: "foo-bar:baz-qux" });
+    // per-character venue: adjacent separators are legal and stay literal
+    expect(normalizeMavenName("foo_-bar")).toEqual({ ok: true, name: "foo_-bar" });
+    // dots are the group syntax and stay literal
+    expect(normalizeMavenName("org.apache.commons:commons-lang3")).toEqual({
+      ok: true,
+      name: "org.apache.commons:commons-lang3",
+    });
+    // upstream allows trailing hyphens on coordinate ids
+    expect(normalizeMavenName("foo-")).toEqual({ ok: true, name: "foo-" });
+  });
+
   it("rejects invalid maven names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
@@ -52,7 +69,7 @@ describe("normalizeMavenName", () => {
       [":artifact", /group:artifact/],
       ["group:", /group:artifact/],
       ["group..artifact:name", /does not allow/],
-      ["has space", /does not allow/],
+      ["café", /does not allow/],
     ];
     for (const [value, reason] of invalid) {
       const result = normalizeMavenName(value);

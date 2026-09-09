@@ -40,6 +40,15 @@ describe("normalizeHexName", () => {
     expect(normalizeHexName("my pkg")).toEqual({ ok: true, name: "my_pkg" });
   });
 
+  it("collapses whitespace and underscore runs; never smuggles hyphens via whitespace", () => {
+    expect(normalizeHexName("my cool app")).toEqual({ ok: true, name: "my_cool_app" });
+    // upstream `^[a-z][a-z0-9_]*$` places no restriction on underscore runs
+    expect(normalizeHexName("foo__bar")).toEqual({ ok: true, name: "foo_bar" });
+    expect(normalizeHexName("foo___bar")).toEqual({ ok: true, name: "foo_bar" });
+    // a hyphen cannot be smuggled in via whitespace: `my - cool` -> `my_-_cool`
+    expect(normalizeHexName("my - cool").ok).toBe(false);
+  });
+
   it("rejects invalid hex names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],

@@ -43,18 +43,43 @@ describe("normalizePackagistName", () => {
     });
   });
 
+  it("collapses whitespace and exactly-two-hyphen runs in the name segment", () => {
+    expect(normalizePackagistName("my cool app")).toEqual({ ok: true, name: "my-cool-app" });
+    expect(normalizePackagistName("foo--bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizePackagistName("vendor/pkg--name")).toEqual({
+      ok: true,
+      name: "vendor/pkg-name",
+    });
+    // dots are legal single separators in both segments (upstream: `less.php`)
+    expect(normalizePackagistName("wikimedia/less.php")).toEqual({
+      ok: true,
+      name: "wikimedia/less.php",
+    });
+    expect(normalizePackagistName("less.php")).toEqual({ ok: true, name: "less.php" });
+  });
+
   it("rejects invalid packagist names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
       ["   ", /empty/],
-      ["has space", /cannot contain spaces/],
       ["a/b/c", /vendor\/name/],
       ["/name", /vendor\/name/],
       ["vendor/", /vendor\/name/],
-      ["-leading", /does not allow/],
-      ["trailing-", /end with a hyphen/],
-      ["vendor/-name", /does not allow/],
-      ["vendor/name-", /end with a hyphen/],
+      ["-leading", /cannot begin or end with a separator/],
+      ["trailing-", /cannot begin or end with a separator/],
+      ["vendor/-name", /cannot begin or end with a separator/],
+      ["vendor/name-", /cannot begin or end with a separator/],
+      ["foo -", /cannot begin or end with a separator/],
+      // upstream forbids underscore runs in the name segment
+      ["foo__bar", /single `.`\/`_` separators/],
+      ["vendor/pkg___name", /single `.`\/`_` separators/],
+      ["foo..bar", /single `.`\/`_` separators/],
+      ["foo._bar", /single `.`\/`_` separators/],
+      // at most two consecutive hyphens upstream
+      ["foo---bar", /at most two hyphens/],
+      // vendor segments allow only single separators (no `--` at all)
+      ["vendor--x/pkg", /vendor/i],
+      ["café", /does not allow/],
     ];
     for (const [value, reason] of invalid) {
       const result = normalizePackagistName(value);

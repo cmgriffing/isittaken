@@ -19,22 +19,36 @@ export interface NugetRegistryOptions {
 }
 
 /**
- * NuGet normalization: case-insensitive, so names are lowercased. Names that
- * could not be published are rejected with a reason.
+ * NuGet normalization: case-insensitive, so names are lowercased. Upstream IDs
+ * validate against `^\w+([.-]\w+)*$` (NuGet.Client PackageIdValidator): word
+ * characters (`[A-Za-z0-9_]`, which makes underscores plain legal characters —
+ * even adjacent to separators) joined by single `.` or `-` separators.
+ * Underscore runs are therefore legal and collapse to one, but hyphen runs,
+ * dot runs, adjacent `.`/`-` separators, and leading/trailing separators can
+ * never be published, so they are rejected locally instead of being checked
+ * (a network check would 404 into a false "available"). Whitespace runs
+ * collapse to the canonical `-` separator. Cross-mapping `-`↔`_` is never
+ * applied.
  */
 export function normalizeNugetName(value: string): RegistryValidation {
-  const collapsed = value.trim().toLowerCase();
+  const collapsed = value.trim().toLowerCase().replace(/\s+/g, "-").replace(/_{2,}/g, "_");
   if (collapsed.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }
   if (!/^[a-z0-9]/.test(collapsed)) {
     return { ok: false, reason: "Name must start with a letter or digit." };
   }
-  if (!/^[a-z0-9._-]+$/.test(collapsed)) {
+  if (!/^[a-z0-9_]+([.-][a-z0-9_]+)*$/.test(collapsed)) {
+    if (/-{2,}/.test(collapsed) || /[.-][.-]/.test(collapsed)) {
+      return {
+        ok: false,
+        reason: "Name contains consecutive separators; NuGet allows only single `.` or `-`.",
+      };
+    }
+    if (/[.-]$/.test(collapsed)) {
+      return { ok: false, reason: "Name cannot end with a separator." };
+    }
     return { ok: false, reason: "Name contains characters NuGet does not allow." };
-  }
-  if (collapsed.endsWith(".")) {
-    return { ok: false, reason: "Name cannot end with a dot." };
   }
   return { ok: true, name: collapsed };
 }
