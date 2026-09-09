@@ -59,8 +59,10 @@ pnpm dev           # http://localhost:4321
 pnpm verify        # full gate chain (lint, format, checks, tests, browser, build shape)
 ```
 
-Netlify deployment: set the site's **base directory** to `apps/web`
-(`netlify.toml` and `netlify/` live there). See
+Netlify deployment: leave the site's **base directory** and **package
+directory** unset — the repository-root `netlify.toml` drives the build
+(build command, publish dir, Functions dir, `/api/*` behavior) and its
+file-based settings override any stale UI values. See
 [docs/deployment.md](docs/deployment.md).
 
 ## CLI usage (from `apps/cli`, or via the published npm package)

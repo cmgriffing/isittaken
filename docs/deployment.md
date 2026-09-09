@@ -1,5 +1,22 @@
 # Deployment and Operations Guide
 
+## Netlify site configuration
+
+The Netlify configuration file is the repository-root `netlify.toml` (the
+monorepo build runs from the root). In the Netlify UI (**Site configuration →
+Build & deploy → Build settings**):
+
+- Leave **Base directory** and **Package directory** unset — the root
+  `netlify.toml` is discovered from the root and all of its paths are
+  root-relative (`apps/web/dist`, `apps/web/netlify/functions`).
+- The file-based settings (build command, publish directory, functions
+  directory, `/api/*` behavior) **override** any values set in the UI, so
+  stale UI values from the pre-monorepo layout are harmless once the root
+  file is present.
+- The build command builds `@isittaken/core` first (fresh build
+  environments have no `dist` output), then runs database migrations
+  against the deploy context's env, then builds the web app.
+
 ## Environment variables
 
 Copy `.env.example` to `.env` for local development. In Netlify, configure
@@ -36,8 +53,9 @@ is what `pnpm migrate` runs; it reads `.env` itself.
 
 ## Schema migrations on deploy
 
-The Netlify build command is `pnpm migrate && pnpm build` (see
-`netlify.toml`), so the deploy itself is the migration gate:
+The Netlify build command builds `@isittaken/core`, then runs
+`pnpm --filter @isittaken/web run migrate`, then builds the web app (see
+the root `netlify.toml`), so the deploy itself is the migration gate:
 
 - **Per-context databases by configuration**: the runner migrates whatever
   `DATABASE_URL` / `DATABASE_AUTH_TOKEN` its environment provides — there is
@@ -139,8 +157,8 @@ or skipped pruning never serves stale values as fresh.
 - **Database**: migrations are additive; older deploys ignore new tables.
   Never destructively migrate during incident response — add and backfill
   (expand/contract, see "Schema migrations on deploy"). To stop applying
-  migrations on deploy, revert `netlify.toml`'s build command to
-  `pnpm build`; because migrations are additive, no schema rollback is ever
-  required.
+  migrations on deploy, remove the `run migrate` step from the root
+  `netlify.toml`'s build command; because migrations are additive, no
+  schema rollback is ever required.
 - **Sessions**: to force global logout, rotate the session cookie name
   (`SESSION_COOKIE_NAME`) — old cookies stop matching instantly.

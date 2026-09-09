@@ -12,9 +12,14 @@ describe("application shell", () => {
   });
 
   it("routes standalone Functions that claim friendly /api paths", () => {
-    const toml = readFileSync(fileURLToPath(new URL("../netlify.toml", import.meta.url)), "utf8");
-    expect(toml).toContain('publish = "dist"');
-    expect(toml).toContain('directory = "netlify/functions"');
+    // The Netlify config lives at the repository root: the site's base
+    // directory is the root, so every path in it is root-relative.
+    const toml = readFileSync(
+      fileURLToPath(new URL("../../../netlify.toml", import.meta.url)),
+      "utf8",
+    );
+    expect(toml).toContain('publish = "apps/web/dist"');
+    expect(toml).toContain('directory = "apps/web/netlify/functions"');
     // Unmatched API paths must not fall through to static assets.
     expect(toml).toContain('from = "/api/*"');
 
@@ -40,10 +45,16 @@ describe("application shell", () => {
   });
 
   it("runs migrations during the Netlify build and keeps local builds database-free", () => {
-    const toml = readFileSync(fileURLToPath(new URL("../netlify.toml", import.meta.url)), "utf8");
+    const toml = readFileSync(
+      fileURLToPath(new URL("../../../netlify.toml", import.meta.url)),
+      "utf8",
+    );
     const command = /command\s*=\s*"([^"]+)"/.exec(toml)?.[1];
-    // The deploy is the migration gate: migrate before build, in netlify.toml only.
-    expect(command).toBe("pnpm migrate && pnpm build");
+    // The deploy is the migration gate: core first (fresh environments have no
+    // dist output), then migrate, then build — in that order.
+    expect(command).toBe(
+      "pnpm --filter @isittaken/core run build && pnpm --filter @isittaken/web run migrate && pnpm --filter @isittaken/web run build",
+    );
 
     const pkg = JSON.parse(
       readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),

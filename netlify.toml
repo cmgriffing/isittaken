@@ -1,0 +1,29 @@
+# Netlify site configuration — lives at the repository ROOT on purpose.
+#
+# The site's base directory stays the repository root (Netlify's default), so
+# every path below is root-relative and this file is found without any
+# package-directory UI setting. File-based settings override the Netlify UI.
+[build]
+  # The deploy is the migration gate: build @isittaken/core (fresh build
+  # environments have no dist output), then migrate against the deploy
+  # context's DATABASE_URL — a failed migration fails the deploy — then build
+  # the site. `pnpm build` in apps/web stays migration-free so local builds
+  # never touch the database.
+  command = "pnpm --filter @isittaken/core run build && pnpm --filter @isittaken/web run migrate && pnpm --filter @isittaken/web run build"
+  publish = "apps/web/dist"
+
+[build.environment]
+  NODE_VERSION = "24.16.0"
+  TURBO_TELEMETRY_DISABLED = "1"
+
+[functions]
+  directory = "apps/web/netlify/functions"
+  node_bundler = "esbuild"
+
+# API routes are declared by each Function via its `config.path` export
+# (Netlify Functions v2), which works identically in local dev and production.
+# Unmatched API paths must not fall through to static asset resolution.
+[[redirects]]
+  from = "/api/*"
+  to = "/404"
+  status = 404

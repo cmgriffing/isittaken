@@ -81,7 +81,7 @@ describe("WebMCP capability guarantees", () => {
   });
 
   it("exposes no npm scope or inside-scope endpoints", () => {
-    const toml = readFileSync(join(root, "netlify.toml"), "utf8");
+    const toml = readFileSync(join(root, "../../netlify.toml"), "utf8");
     expect(toml).not.toMatch(/scope/i);
 
     const functionFiles = readdirSync(join(root, "netlify/functions"));
