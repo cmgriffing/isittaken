@@ -89,6 +89,19 @@ results carry `fuzzy: true`; qualified input upgrades them to exact checks).
 Go bare-word search is best-effort and honestly reports `unknown` when
 pkg.go.dev rate-limits the client.
 
+**Name normalization** (per venue, mirrors each registry's own rules):
+whitespace runs collapse to the venue's canonical separator (`-` everywhere,
+`_` on hex), so `my cool app` checks `my-cool-app` (or `my_cool_app` on hex)
+instead of painting false `invalid` cells. Consecutive same-separator runs
+collapse to one (`--`→`-`, `__`→`_`) where upstream permits the run form
+(npm, crates, rubygems, maven, go, hex, nuget `_`-runs only), so
+confusable typo-squat neighbors report the canonical form's verdict; venues
+whose upstream rules forbid runs (nuget `-`-runs, packagist `_`/`.` runs and
+all vendor-segment runs) classify them `invalid` locally instead — never a
+false "available". Every verdict displays the normalized (checked) name so
+the substitution is always visible. The creative generator correspondingly
+proposes dot-free, separator-canonical candidates only.
+
 `--json` output is agent-first: a top-level `summary` rollup answers "what
 can I claim?" directly — `anyAvailable`, per-status `counts`, and an
 `available` list mapping each input to its exact venues (definitive) and its

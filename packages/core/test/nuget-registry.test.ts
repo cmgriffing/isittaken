@@ -42,15 +42,37 @@ describe("normalizeNugetName", () => {
     });
   });
 
+  it("collapses whitespace and underscore runs; keeps dots literal and no cross-map", () => {
+    expect(normalizeNugetName("has space")).toEqual({ ok: true, name: "has-space" });
+    expect(normalizeNugetName("my cool app")).toEqual({ ok: true, name: "my-cool-app" });
+    // underscore runs are legal upstream (word chars) and collapse to one
+    expect(normalizeNugetName("foo__bar")).toEqual({ ok: true, name: "foo_bar" });
+    expect(normalizeNugetName("foo___bar")).toEqual({ ok: true, name: "foo_bar" });
+    // dots stay literal; no cross-canonicalization of `-`/`_`
+    expect(normalizeNugetName("my.cool.lib")).toEqual({ ok: true, name: "my.cool.lib" });
+    expect(normalizeNugetName("foo_bar")).toEqual({ ok: true, name: "foo_bar" });
+    // underscore is a word char upstream: adjacent to separators and trailing are legal
+    expect(normalizeNugetName("foo_-bar")).toEqual({ ok: true, name: "foo_-bar" });
+    expect(normalizeNugetName("trailing_")).toEqual({ ok: true, name: "trailing_" });
+    expect(normalizeNugetName("foo_.bar")).toEqual({ ok: true, name: "foo_.bar" });
+  });
+
   it("rejects invalid nuget names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
       ["   ", /empty/],
       ["-leading", /start with a letter/],
-      ["trailing.", /end with a dot/],
       ["has/slash", /does not allow/],
-      ["has space", /does not allow/],
       ["café", /does not allow/],
+      // upstream `^\w+([.-]\w+)*$`: single `.`/`-` separators (underscore is a word char)
+      ["foo--bar", /consecutive separators/],
+      ["foo---bar", /consecutive separators/],
+      ["foo.-bar", /consecutive separators/],
+      ["foo..bar", /consecutive separators/],
+      ["trailing.", /end with a separator/],
+      ["trailing-", /end with a separator/],
+      ["foo -", /consecutive separators/],
+      ["foo-", /end with a separator/],
     ];
     for (const [value, reason] of invalid) {
       const result = normalizeNugetName(value);

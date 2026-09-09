@@ -5,7 +5,7 @@ import {
   sanitizeUpstreamSnippet,
 } from "../../lib/upstream";
 
-export const OPENROUTER_PROMPT_VERSION = 1;
+export const OPENROUTER_PROMPT_VERSION = 2;
 
 /**
  * Strict JSON Schema for model output. The schema version participates in
@@ -53,8 +53,8 @@ function buildMessages(seed: string, count: number) {
       role: "user" as const,
       content:
         `Seed word: "${seed}". Propose ${count} package-name candidates ` +
-        `inspired by the seed. Lowercase letters, digits, hyphens, dots or ` +
-        `underscores; no spaces; no scope prefixes.`,
+        `inspired by the seed. Lowercase letters, digits, hyphens or ` +
+        `underscores; no spaces; no dots; no scope prefixes.`,
     },
   ];
 }

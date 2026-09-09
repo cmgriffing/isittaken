@@ -64,7 +64,10 @@ function classifyMavenSearch(input: ClassifyInput): RegistryClassification {
 /**
  * Maven normalization: case-sensitive (artifact and group ids keep case). A
  * bare word is a search term; `group:artifact` (exactly one colon) is a
- * qualified coordinate.
+ * qualified coordinate. Upstream coordinate ids are `[A-Za-z0-9_.-]+` with no
+ * run or adjacency restriction, so whitespace runs collapse to `-` and
+ * consecutive same-separator runs collapse to one per segment for
+ * squat-resistance; dots (the group syntax) stay literal.
  */
 export function normalizeMavenName(value: string): RegistryValidation {
   const trimmed = value.trim();
@@ -74,7 +77,10 @@ export function normalizeMavenName(value: string): RegistryValidation {
   if (trimmed.includes("/")) {
     return { ok: false, reason: "Maven names use group:artifact, not slashes." };
   }
-  const parts = trimmed.split(":");
+  const collapseSegment = (segment: string): string =>
+    segment.replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_");
+  const collapsed = trimmed.split(":").map(collapseSegment).join(":");
+  const parts = collapsed.split(":");
   if (parts.length > 2) {
     return { ok: false, reason: "Maven names are group:artifact." };
   }
@@ -87,12 +93,12 @@ export function normalizeMavenName(value: string): RegistryValidation {
     if (!groupSegments.every((segment) => GROUP_SEGMENT.test(segment)) || !BARE.test(artifact)) {
       return { ok: false, reason: "Name contains characters Maven does not allow." };
     }
-    return { ok: true, name: trimmed };
+    return { ok: true, name: collapsed };
   }
-  if (!BARE.test(trimmed)) {
+  if (!BARE.test(collapsed)) {
     return { ok: false, reason: "Name contains characters Maven does not allow." };
   }
-  return { ok: true, name: trimmed };
+  return { ok: true, name: collapsed };
 }
 
 /**

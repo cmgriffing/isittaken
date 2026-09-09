@@ -40,14 +40,30 @@ describe("normalizeRubygemsName", () => {
     expect(normalizeRubygemsName("sinatra-contrib")).toEqual({ ok: true, name: "sinatra-contrib" });
   });
 
+  it("collapses whitespace and same-separator runs; keeps case and mixed separators literal", () => {
+    expect(normalizeRubygemsName("my cool app")).toEqual({ ok: true, name: "my-cool-app" });
+    expect(normalizeRubygemsName("foo--bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeRubygemsName("foo__bar")).toEqual({ ok: true, name: "foo_bar" });
+    expect(normalizeRubygemsName("My Cool App")).toEqual({ ok: true, name: "My-Cool-App" });
+    // per-character venue: adjacent separators are legal and stay literal
+    expect(normalizeRubygemsName("foo_-bar")).toEqual({ ok: true, name: "foo_-bar" });
+    // dots stay literal (upstream: `less.rb` exists)
+    expect(normalizeRubygemsName("less.rb")).toEqual({ ok: true, name: "less.rb" });
+    // no cross-canonicalization
+    expect(normalizeRubygemsName("foo_bar")).toEqual({ ok: true, name: "foo_bar" });
+  });
+
   it("rejects invalid rubygems names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
       ["   ", /empty/],
       ["-leading", /start with a letter/],
       ["has/slash", /does not allow/],
-      ["has space", /does not allow/],
       ["café", /does not allow/],
+      ["trailing-", /end with a separator/],
+      ["trailing_", /end with a separator/],
+      ["trailing.", /end with a separator/],
+      ["foo -", /end with a separator/],
     ];
     for (const [value, reason] of invalid) {
       const result = normalizeRubygemsName(value);

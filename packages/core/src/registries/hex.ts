@@ -23,11 +23,13 @@ export interface HexRegistryOptions {
  * upstream: a lowercase letter start followed only by `[a-z0-9_]`. Hyphens
  * and dots are NOT valid Hex names (a hyphenated name gets a plain 404 from
  * Hex, which would falsely classify as available), so they are rejected here.
- * Whitespace runs collapse to the underscore Hex treats as its separator.
- * Digits are only allowed after a leading letter.
+ * Whitespace runs collapse to the underscore Hex treats as its separator, and
+ * consecutive underscore runs (`__`) collapse to one because the upstream
+ * regex places no restriction on underscore runs. Digits are only allowed
+ * after a leading letter.
  */
 export function normalizeHexName(value: string): RegistryValidation {
-  const name = value.trim().replace(/\s+/g, "_").toLowerCase();
+  const name = value.trim().replace(/\s+/g, "_").replace(/_{2,}/g, "_").toLowerCase();
   if (name.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }

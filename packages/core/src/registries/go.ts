@@ -25,18 +25,20 @@ const PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /**
  * Go normalization: a bare word is a search term; a qualified module path has
  * at least two `/`-segments whose first segment contains a dot. Uppercase is
- * allowed pre-escape.
+ * allowed pre-escape. Upstream module path elements are ASCII letters/digits
+ * plus `-.~_` with no run restriction (only dot boundaries are banned), so
+ * whitespace runs collapse to `-` and consecutive same-separator runs collapse
+ * to one per path segment, for squat-resistance.
  */
 export function normalizeGoName(value: string): RegistryValidation {
+  const collapseSegment = (segment: string): string =>
+    segment.replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_");
   const trimmed = value.trim();
   if (trimmed.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }
-  if (trimmed.includes(" ")) {
-    return { ok: false, reason: "Name cannot contain spaces." };
-  }
   if (trimmed.includes("/")) {
-    const segments = trimmed.split("/");
+    const segments = trimmed.split("/").map(collapseSegment);
     if (segments.length < 2) {
       return { ok: false, reason: "not a valid Go module path" };
     }
@@ -47,12 +49,13 @@ export function normalizeGoName(value: string): RegistryValidation {
     if (!segments.every((segment) => PATH_SEGMENT.test(segment))) {
       return { ok: false, reason: "Name contains characters Go does not allow." };
     }
-    return { ok: true, name: trimmed };
+    return { ok: true, name: segments.join("/") };
   }
-  if (!BARE.test(trimmed)) {
+  const collapsed = collapseSegment(trimmed);
+  if (!BARE.test(collapsed)) {
     return { ok: false, reason: "Name contains characters Go does not allow." };
   }
-  return { ok: true, name: trimmed };
+  return { ok: true, name: collapsed };
 }
 
 /** Escape a module path for the Go module proxy: uppercase -> "!" + lowercase. */

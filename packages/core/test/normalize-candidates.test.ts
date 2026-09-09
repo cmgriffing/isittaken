@@ -15,6 +15,13 @@ describe("normalizeCandidateValue", () => {
   it("applies unicode NFKC folding", () => {
     expect(normalizeCandidateValue("\uFB01ne")).toBe("fine");
   });
+
+  it("is charset-agnostic: separators and dots pass through for venue normalizers", () => {
+    // Candidate normalization only performs NFKC + whitespace folding; it must
+    // not enforce a candidate charset — per-venue normalizers are the final
+    // gate for anything a user types or a generator proposes.
+    expect(normalizeCandidateValue("my-cool_lib.v2")).toBe("my-cool_lib.v2");
+  });
 });
 
 describe("normalizeAndDedupeCandidates", () => {

@@ -41,13 +41,22 @@ describe("normalizeCratesName", () => {
     expect(normalizeCratesName("  Laser  ")).toEqual({ ok: true, name: "laser" });
   });
 
+  it("collapses the whole separator class (underscore-equivalent, whitespace) to hyphens", () => {
+    expect(normalizeCratesName("has space")).toEqual({ ok: true, name: "has-space" });
+    expect(normalizeCratesName("foo  bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeCratesName("foo__bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeCratesName("foo--bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeCratesName("foo -_ bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeCratesName("My Cool App")).toEqual({ ok: true, name: "my-cool-app" });
+  });
+
   it("rejects invalid crates names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
       ["   ", /empty/],
       ["-leading", /start with a letter/],
       ["trailing-", /end with a hyphen/],
-      ["has space", /does not allow/],
+      ["foo -", /end with a hyphen/],
       ["café", /does not allow/],
       ["dot.name", /does not allow/],
     ];

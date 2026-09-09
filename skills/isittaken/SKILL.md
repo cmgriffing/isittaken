@@ -36,8 +36,12 @@ available? It classifies conservatively and never invents names for you.
 
 1. **Brainstorm candidates yourself.** Generate a spread of plausible names —
    exact topic words, hyphenated compounds, short compound words. Multi-word
-   phrases are accepted; npm collapses whitespace runs to hyphens
-   (`"fuzzy picker"` is checked as `fuzzy-picker`).
+   phrases are accepted: every venue collapses whitespace runs to its
+   canonical separator (`"my cool app"` is checked as `my-cool-app`, or
+   `my_cool_app` on hex), so a phrase never paints a false `invalid` cell.
+   Consecutive same-separator runs collapse to one where upstream allows the
+   run form (`foo--bar` → `foo-bar`); venues that forbid runs classify them
+   `invalid` locally. Results always show the normalized (checked) name.
 2. **Check them:**
 
    ```bash

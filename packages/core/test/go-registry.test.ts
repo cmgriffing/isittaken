@@ -39,11 +39,30 @@ describe("normalizeGoName", () => {
     });
   });
 
+  it("collapses whitespace and separator runs per path segment (case preserved)", () => {
+    expect(normalizeGoName("my cool app")).toEqual({ ok: true, name: "my-cool-app" });
+    expect(normalizeGoName("foo--bar")).toEqual({ ok: true, name: "foo-bar" });
+    expect(normalizeGoName("foo__bar")).toEqual({ ok: true, name: "foo_bar" });
+    expect(normalizeGoName("My Cool App")).toEqual({ ok: true, name: "My-Cool-App" });
+    expect(normalizeGoName("example.com/foo bar/baz--qux")).toEqual({
+      ok: true,
+      name: "example.com/foo-bar/baz-qux",
+    });
+    // per-character venue: adjacent separators are legal and stay literal
+    expect(normalizeGoName("foo_-bar")).toEqual({ ok: true, name: "foo_-bar" });
+    // dots stay literal (host segment + version suffixes)
+    expect(normalizeGoName("github.com/user/yaml.v2")).toEqual({
+      ok: true,
+      name: "github.com/user/yaml.v2",
+    });
+    // upstream allows trailing hyphens on path elements
+    expect(normalizeGoName("foo-")).toEqual({ ok: true, name: "foo-" });
+  });
+
   it("rejects invalid go names with reasons", () => {
     const invalid: [string, RegExp][] = [
       ["", /empty/],
       ["   ", /empty/],
-      ["has space", /cannot contain spaces/],
       ["no-dot/path", /not a valid Go module path/],
       ["-leading", /does not allow/],
       ["café", /does not allow/],

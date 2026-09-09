@@ -19,21 +19,29 @@ export interface RubygemsRegistryOptions {
 }
 
 /**
- * RubyGems normalization: trim only, case preserved. Names that could not be
- * published are rejected with a reason.
+ * RubyGems normalization: case preserved (upstream names are
+ * `[A-Za-z0-9._-]+` with no run or adjacency restriction, so `--`, `__`, and
+ * mixed sequences stay distinct legal spellings — same-character runs merely
+ * collapse for squat-resistance). Whitespace runs collapse to the canonical
+ * hyphen. Upstream additionally bans leading and trailing separators; the
+ * leading ban is covered by the first-character check, trailing is explicit.
+ * Names that could not be published are rejected with a reason.
  */
 export function normalizeRubygemsName(value: string): RegistryValidation {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
+  const collapsed = value.trim().replace(/\s+/g, "-").replace(/-{2,}/g, "-").replace(/_{2,}/g, "_");
+  if (collapsed.length === 0) {
     return { ok: false, reason: "Name is empty." };
   }
-  if (!/^[A-Za-z0-9]/.test(trimmed)) {
+  if (!/^[A-Za-z0-9]/.test(collapsed)) {
     return { ok: false, reason: "Name must start with a letter or digit." };
   }
-  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+  if (!/^[A-Za-z0-9._-]+$/.test(collapsed)) {
     return { ok: false, reason: "Name contains characters RubyGems does not allow." };
   }
-  return { ok: true, name: trimmed };
+  if (/[._-]$/.test(collapsed)) {
+    return { ok: false, reason: "Name cannot end with a separator." };
+  }
+  return { ok: true, name: collapsed };
 }
 
 /**
